@@ -7,7 +7,7 @@ function TestPublicGraphicsTypes: Boolean;
 implementation
 function TestPublicGraphicsTypes: Boolean;
 var Canvas:TSkiaBitmapCanvas;Bitmap:TBitmap;Brush:TBrush;Pen:TPen;Font:TFont;
-  Image:ISkImage;Face:ISkTypeface;Path:ISkPath;Builder:ISkPathBuilder;
+  Pixmap:ISkPixmap;Image:ISkImage;Face:ISkTypeface;Path:ISkPath;Builder:ISkPathBuilder;
   Paint:ISkPaint;NativeFont:ISkFont;Matrix:TMatrix;Bounds:TRectF;
   Pixel:TAlphaColor;Metrics:TSkFontMetrics;Formats:TTextFormat;
 begin
@@ -19,6 +19,12 @@ begin
     Font.Name:='Arial';Font.Style:=[fsBold];Font.Height:=-16;Canvas.Font.Assign(Font);
     Canvas.CopyMode:=cmSrcCopy;Canvas.FillRect(TRect.Create(0,0,32,32));
     Canvas.Flush(Bitmap);Bitmap.PixelFormat:=pf32bit;Bitmap.AlphaFormat:=afDefined;
+    Pixmap:=TSkPixmap.Create;
+    Result:=(Pixmap.Width=0) and (Pixmap.Height=0);
+    Canvas.FontEdging:=TSkFontEdging.AntiAlias;
+    Canvas.FontHinting:=TSkFontHinting.None;
+    Canvas.FontSubpixel:=True;
+    Canvas.DrawPixmap(0,0,Pixmap);
     Image:=Canvas.Snapshot;Face:=TSkTypeface.MakeDefault;
     NativeFont:=TSkFont.Create(Face,16);NativeFont.GetMetrics(Metrics);
     Paint:=TSkPaint.Create;Paint.Style:=TSkPaintStyle.Fill;Paint.Color:=ColorToAlphaColor(clRed);
@@ -28,7 +34,7 @@ begin
     Canvas.SetClipPath(Path);Canvas.ResetClip;
     Matrix:=TMatrix.Identity;Canvas.SetWorldTransform(Matrix);
     Pixel:=ColorToAlphaColor(clRed);Formats:=[tfSingleLine,tfNoPrefix];
-    Result:=(Image.Width=32) and (Bitmap.Canvas.Pixels[10,10]=clRed) and
+    Result:=Result and (Image.Width=32) and (Bitmap.Canvas.Pixels[10,10]=clRed) and
       (NativeFont.UnicharToGlyph(Ord('A'))<>0) and (Pixel=$FFFF0000) and
       (Formats=[tfSingleLine,tfNoPrefix]) and (Metrics.Descent>=0);
   finally Font.Free;Pen.Free;Brush.Free;Bitmap.Free;Canvas.Free;end;

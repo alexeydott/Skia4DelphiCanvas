@@ -527,6 +527,8 @@ procedure TSkiaCanvas.PlainTextPaths(const Text: string; X, Baseline: Single; co
 
 var
   Glyphs: TArray<Word>;
+  Positions: TArray<TPointF>;
+  Advance: Single;
   Widths: TArray<Single>;
   Path: ISkPath;
   I: Integer;
@@ -538,6 +540,19 @@ begin
 
   Glyphs := Font.GetGlyphs(Text);
   Widths := Font.GetWidths(Glyphs);
+  if FFontRenderingCustomized and FBackingIsOutput and not FTextToCurves then
+  begin
+    SetLength(Positions, Length(Glyphs));
+    Advance := 0;
+    for I := 0 to High(Glyphs) do
+    begin
+      Positions[I] := PointF(Advance, 0);
+      Advance := Advance + Widths[I];
+    end;
+    if Length(Glyphs) <> 0 then
+      FCanvas.DrawGlyphs(Glyphs, Positions, PointF(X, Baseline), Font, Paint);
+    Exit;
+  end;
   for I := 0 to High(Glyphs) do
   begin
     Path := Font.GetPath(Glyphs[I]);

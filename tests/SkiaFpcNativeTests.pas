@@ -109,6 +109,8 @@ begin
   finally SVG:=nil;Stream.Free;Bitmap.Free;Canvas.Free;end;
 end;
 {$I SkiaBltTests.inc}
+{$I SkiaBindingsTests.inc}
+{$I SkiaRasterOptionsTests.inc}
 {$I SkiaTextPathTests.inc}
 {$I SkiaUnicodeTests.inc}
 {$I SkiaThreadTests.inc}
@@ -123,6 +125,8 @@ begin
   TestThreadSafety;
   TestUnicodeTextHelpers;
   TestCanvasApiGuards;
+  TestUpdatedSkiaBindings;
+  TestCanvasRasterSettingsAndPixmap;
   T_BltNativeSources;
   TestRops;
   TestNativePathsAndState;

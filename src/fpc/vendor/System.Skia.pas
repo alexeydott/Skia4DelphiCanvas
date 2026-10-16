@@ -1,4 +1,4 @@
-{************************************************************************}
+﻿{************************************************************************}
 {                                                                        }
 {                              Skia4Delphi                               }
 {                                                                        }
@@ -482,6 +482,16 @@ type
     class function Mitchell: TSkCubicResampler; static; inline;
     class operator Equal(const ACubicResampler1, ACubicResampler2: TSkCubicResampler): Boolean;
     class operator NotEqual(const ACubicResampler1, ACubicResampler2: TSkCubicResampler): Boolean;
+  end;
+
+  { TSkFontFeature }
+
+  TSkFontFeature = record
+    Name: string;
+    Value: Integer;
+    constructor Create(const AName: string; const AValue: Integer);
+    class operator Equal(const AFontFeature1, AFontFeature2: TSkFontFeature): Boolean;
+    class operator NotEqual(const AFontFeature1, AFontFeature2: TSkFontFeature): Boolean;
   end;
 
   { TSkFontMetrics }
@@ -2485,11 +2495,24 @@ type
     function ScalePixels(const ADestImageInfo: TSkImageInfo; const ADestPixels: Pointer; const ADestRowBytes: NativeUInt; const ASampling: TSkSamplingOptions): Boolean; overload;
     procedure SetColorSpace(AValue: ISkColorSpace);
   public
-    constructor Create(const AImageInfo: TSkImageInfo; const APixels: Pointer; const ARowBytes: NativeUInt);
+    constructor Create(const AImageInfo: TSkImageInfo; const APixels: Pointer; const ARowBytes: NativeUInt); overload;
+    {$IFDEF FPC}
+    constructor Create; overload;
+    {$ENDIF}
     class procedure __DestroyHandle(const AHandle: sk_handle_t); override;
   end;
 
   {$HPPEMIT END '#define SkPixmap(...) __SkCreate(TSkPixmap, ISkPixmap, __VA_ARGS__)'}
+
+  { TSkPixmapHelper }
+
+  // TODO: Merge this constructor in TSkPixmap in the next major version.
+  TSkPixmapHelper = class helper for TSkPixmap
+  {$IFNDEF FPC}
+  public
+    constructor Create; overload;
+  {$ENDIF}
+  end;
 
   TSkRectEnumerator = TSkEnumerable<TRect>.TEnumerator;
 
@@ -3538,6 +3561,27 @@ type
 
   {$HPPEMIT END '#define SkTextStyle(...) __SkCreate(TSkTextStyle, ISkTextStyle, __VA_ARGS__)'}
 
+  { TSkTextStyleHelper }
+
+  // TODO: Merge these properties in TSkTextStyle and ISkTextStyle in the next major version.
+  TSkTextStyleHelper = class helper for TSkTextStyle
+  strict private
+    function GetFontEdging: TSkFontEdging;
+    function GetFontFeatures: TArray<TSkFontFeature>;
+    function GetFontHinting: TSkFontHinting;
+    function GetShadows: TArray<TSkTextShadow>;
+    function GetSubpixel: Boolean;
+    procedure SetFontEdging(const AValue: TSkFontEdging);
+    procedure SetFontHinting(const AValue: TSkFontHinting);
+    procedure SetSubpixel(const AValue: Boolean);
+  public
+    property FontEdging: TSkFontEdging read GetFontEdging write SetFontEdging;
+    property FontFeatures: TArray<TSkFontFeature> read GetFontFeatures;
+    property FontHinting: TSkFontHinting read GetFontHinting write SetFontHinting;
+    property Shadows: TArray<TSkTextShadow> read GetShadows;
+    property Subpixel: Boolean read GetSubpixel write SetSubpixel;
+  end;
+
   { ISkTypefaceFontProvider }
 
   ISkTypefaceFontProvider = interface(ISkReferenceCounted)
@@ -4007,6 +4051,32 @@ type
     function GetText: string;
   public
     constructor Create;
+    class procedure __DestroyHandle(const AHandle: sk_handle_t); override;
+  end;
+
+  { TRegionCliperatorEx }
+
+  // TODO: Move this declaration to TSkRegion.TRegionCliperator in the next major version.
+  TRegionCliperatorEx = class(TSkEnumerable<TRect>, ISkRegionCliperator)
+  strict private
+    FCurrent: TRect;
+  public
+    constructor Create(const ARegion: ISkRegion; const AClip: TRect);
+    function GetCurrent: TRect; override;
+    function MoveNext: Boolean; override;
+    class procedure __DestroyHandle(const AHandle: sk_handle_t); override;
+  end;
+
+  { TRegionIteratorEx }
+
+  // TODO: Move this declaration to TSkRegion.TRegionIterator in the next major version.
+  TRegionIteratorEx = class(TSkEnumerable<TRect>, ISkRegionIterator)
+  strict private
+    FCurrent: TRect;
+  public
+    constructor Create(const ARegion: ISkRegion);
+    function GetCurrent: TRect; override;
+    function MoveNext: Boolean; override;
     class procedure __DestroyHandle(const AHandle: sk_handle_t); override;
   end;
 
@@ -4713,6 +4783,27 @@ class operator TSkCubicResampler.NotEqual(const ACubicResampler1,
   ACubicResampler2: TSkCubicResampler): Boolean;
 begin
   Result := not (ACubicResampler1 = ACubicResampler2);
+end;
+
+{ TSkFontFeature }
+
+constructor TSkFontFeature.Create(const AName: string; const AValue: Integer);
+begin
+  Name  := AName;
+  Value := AValue;
+end;
+
+class operator TSkFontFeature.Equal(const AFontFeature1,
+  AFontFeature2: TSkFontFeature): Boolean;
+begin
+  Result := (AFontFeature1.Name  = AFontFeature2.Name ) and
+            (AFontFeature1.Value = AFontFeature2.Value);
+end;
+
+class operator TSkFontFeature.NotEqual(const AFontFeature1,
+  AFontFeature2: TSkFontFeature): Boolean;
+begin
+  Result := not (AFontFeature1 = AFontFeature2);
 end;
 
 { TSkFontMetrics }
@@ -9730,6 +9821,20 @@ begin
   sk4d_pixmap_destroy(AHandle);
 end;
 
+{ TSkPixmapHelper }
+
+{$IFDEF FPC}
+constructor TSkPixmap.Create;
+begin
+  inherited Create(sk4d_pixmap_create2());
+end;
+{$ELSE}
+constructor TSkPixmapHelper.Create;
+begin
+  Wrap(sk4d_pixmap_create2());
+end;
+{$ENDIF}
+
 { TSkRegion }
 
 function TSkRegion.Contains(const ARegion: ISkRegion): Boolean;
@@ -9779,12 +9884,12 @@ end;
 
 function TSkRegion.GetCliperator(const AClip: TRect): ISkRegionCliperator;
 begin
-  Result := TRegionCliperator.Create(Self, AClip);
+  Result := TRegionCliperatorEx.Create(Self, AClip);
 end;
 
 function TSkRegion.GetIterator: ISkRegionIterator;
 begin
-  Result := TRegionIterator.Create(Self);
+  Result := TRegionIteratorEx.Create(Self);
 end;
 
 function TSkRegion.GetSpanerator(const AY, ALeft,
@@ -9963,6 +10068,59 @@ class procedure TSkRegion.TRegionSpanerator.__DestroyHandle(
   const AHandle: sk_handle_t);
 begin
   sk4d_regionspanerator_destroy(AHandle);
+end;
+
+{ TRegionCliperatorEx }
+
+constructor TRegionCliperatorEx.Create(const ARegion: ISkRegion;
+  const AClip: TRect);
+begin
+  inherited Create(sk4d_regioncliperator_create(ARegion.Handle, @AClip));
+end;
+
+function TRegionCliperatorEx.GetCurrent: TRect;
+begin
+  Result := FCurrent;
+end;
+
+// sk4d_regioncliperator_move_next steps past the current rectangle, so it has
+// to be read before.
+function TRegionCliperatorEx.MoveNext: Boolean;
+begin
+  sk4d_regioncliperator_get_current(Handle, sk_irect_t(FCurrent));
+  Result := sk4d_regioncliperator_move_next(Handle);
+end;
+
+class procedure TRegionCliperatorEx.__DestroyHandle(
+  const AHandle: sk_handle_t);
+begin
+  sk4d_regioncliperator_destroy(AHandle);
+end;
+
+{ TRegionIteratorEx }
+
+constructor TRegionIteratorEx.Create(const ARegion: ISkRegion);
+begin
+  inherited Create(sk4d_regioniterator_create(ARegion.Handle));
+end;
+
+function TRegionIteratorEx.GetCurrent: TRect;
+begin
+  Result := FCurrent;
+end;
+
+// sk4d_regioniterator_move_next steps past the current rectangle, so it has to
+// be read before.
+function TRegionIteratorEx.MoveNext: Boolean;
+begin
+  sk4d_regioniterator_get_current(Handle, sk_irect_t(FCurrent));
+  Result := sk4d_regioniterator_move_next(Handle);
+end;
+
+class procedure TRegionIteratorEx.__DestroyHandle(
+  const AHandle: sk_handle_t);
+begin
+  sk4d_regioniterator_destroy(AHandle);
 end;
 
 { TSkRoundRect }
@@ -12308,8 +12466,15 @@ begin
 end;
 
 procedure TSkTextStyle.AddShadow(const AShadow: TSkTextShadow);
+var
+  LShadow: sk_textshadow_t;
 begin
-  sk4d_textstyle_add_shadow(Handle, @AShadow);
+  FillChar(LShadow, SizeOf(LShadow), 0);
+  LShadow.color := AShadow.Color;
+  LShadow.offset.x := AShadow.Offset.X;
+  LShadow.offset.y := AShadow.Offset.Y;
+  LShadow.blur_radius := AShadow.BlurRadius;
+  sk4d_textstyle_add_shadow(Handle, @LShadow);
 end;
 
 procedure TSkTextStyle.ClearBackgroundColor;
@@ -12548,6 +12713,73 @@ end;
 class procedure TSkTextStyle.__DestroyHandle(const AHandle: sk_handle_t);
 begin
   sk4d_textstyle_destroy(AHandle);
+end;
+
+{ TSkTextStyleHelper }
+
+function TSkTextStyleHelper.GetFontEdging: TSkFontEdging;
+begin
+  Result := TSkFontEdging(sk4d_textstyle_get_font_edging(Handle));
+end;
+
+function TSkTextStyleHelper.GetFontFeatures: TArray<TSkFontFeature>;
+var
+  I: NativeInt;
+  LName: ISkString;
+  LNames: TArray<sk_string_t>;
+  LValues: TArray<int32_t>;
+begin
+  SetLength(LNames{%H-}, sk4d_textstyle_get_font_features(Handle, nil, nil));
+  SetLength(LValues{%H-}, Length(LNames));
+  if Length(LNames) = 0 then
+    Exit(nil);
+  sk4d_textstyle_get_font_features(Handle, @LNames[0], @LValues[0]);
+  SetLength(Result{%H-}, Length(LNames));
+  for I := 0 to Length(LNames) - 1 do
+  begin
+    LName     := TSkString.Wrap(LNames[I]);
+    Result[I] := TSkFontFeature.Create(LName.Text, LValues[I]);
+  end;
+end;
+
+function TSkTextStyleHelper.GetFontHinting: TSkFontHinting;
+begin
+  Result := TSkFontHinting(sk4d_textstyle_get_font_hinting(Handle));
+end;
+
+function TSkTextStyleHelper.GetShadows: TArray<TSkTextShadow>;
+var
+  LShadows: TArray<sk_textshadow_t>;
+  I: Integer;
+begin
+  SetLength(LShadows, sk4d_textstyle_get_shadows(Handle, nil));
+  SetLength(Result, Length(LShadows));
+  if Length(LShadows) = 0 then
+    Exit;
+  sk4d_textstyle_get_shadows(Handle, @LShadows[0]);
+  for I := 0 to High(LShadows) do
+    Result[I] := TSkTextShadow.Create(LShadows[I].color,
+      PointF(LShadows[I].offset.x, LShadows[I].offset.y), LShadows[I].blur_radius);
+end;
+
+function TSkTextStyleHelper.GetSubpixel: Boolean;
+begin
+  Result := sk4d_textstyle_get_subpixel(Handle);
+end;
+
+procedure TSkTextStyleHelper.SetFontEdging(const AValue: TSkFontEdging);
+begin
+  sk4d_textstyle_set_font_edging(Handle, sk_fontedging_t(AValue));
+end;
+
+procedure TSkTextStyleHelper.SetFontHinting(const AValue: TSkFontHinting);
+begin
+  sk4d_textstyle_set_font_hinting(Handle, sk_fonthinting_t(AValue));
+end;
+
+procedure TSkTextStyleHelper.SetSubpixel(const AValue: Boolean);
+begin
+  sk4d_textstyle_set_subpixel(Handle, AValue);
 end;
 
 { TSkTypefaceFontProvider }

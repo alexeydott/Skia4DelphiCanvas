@@ -1,7 +1,7 @@
 # Native Skia runtimes
 
 The default shared-library and static builds use Skia 151.0.1 and the Skia4Delphi 7.3.0
-Pascal bindings in [src/fpc/vendor](../src/fpc/vendor/README.md).
+Pascal bindings at `fce5db2ffcf547f597f5f0a6b2125d779d5598e3` in [src/fpc/vendor](../src/fpc/vendor/README.md).
 
 All paths and commands below are relative to the [project root](../README.md),
 `D:\projects\externals\Skia4DelphiCanvas` on Windows or

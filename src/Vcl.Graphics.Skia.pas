@@ -74,6 +74,7 @@ type
   ISkCanvas = System.Skia.ISkCanvas;
   ISkSurface = System.Skia.ISkSurface;
   ISkImage = System.Skia.ISkImage;
+  ISkPixmap = System.Skia.ISkPixmap;
   ISkPaint = System.Skia.ISkPaint;
   ISkFont = System.Skia.ISkFont;
   ISkTypeface = System.Skia.ISkTypeface;
@@ -98,6 +99,7 @@ type
   ISkDocument = System.Skia.ISkDocument;
   TSkSurface = System.Skia.TSkSurface;
   TSkImage = System.Skia.TSkImage;
+  TSkPixmap = System.Skia.TSkPixmap;
   TSkPaint = System.Skia.TSkPaint;
   TSkFont = System.Skia.TSkFont;
   TSkTypeface = System.Skia.TSkTypeface;
@@ -152,6 +154,13 @@ type
   TSkFontSlant = System.Skia.TSkFontSlant;
   TSkRegionOp = System.Skia.TSkRegionOp;
   TSkBlurStyle = System.Skia.TSkBlurStyle;
+
+{$IFNDEF FPC}
+  TSkiaPixmapHelper = class helper for TSkPixmap
+  public
+    constructor Create; overload;
+  end;
+{$ENDIF}
 
 const
   { Unscoped VCL enum values are exported explicitly alongside their type aliases. }
@@ -902,6 +911,9 @@ type
     /// Saved text outline mode.
     /// </summary>
     TextToCurves: Boolean;
+    FontEdging: TSkFontEdging;
+    FontHinting: TSkFontHinting;
+    FontSubpixel, FontRenderingCustomized: Boolean;
     /// <summary>
     /// Creates owned pen, brush and font copies for a state snapshot.
     /// </summary>
@@ -954,7 +966,15 @@ type
     FOutputCanvas: ISkCanvas;
     FStateStack: TObjectList<TSkiaCanvasState>;
     FTextToCurves: Boolean;
+    FFontEdging: TSkFontEdging;
+    FFontHinting: TSkFontHinting;
+    FFontSubpixel, FFontRenderingCustomized: Boolean;
     FGlyphCache: TSkiaGdiGlyphCache;
+    procedure SetFontEdging(Value: TSkFontEdging);
+    procedure SetFontHinting(Value: TSkFontHinting);
+    procedure SetFontSubpixel(Value: Boolean);
+    procedure ConfigureFont(const AFont: ISkFont);
+    procedure ConfigureParagraphStyle(const Style: ISkParagraphStyle);
     procedure UnregisterCompatibility;
     procedure InitializeCompatibility;
     function BeginOperation(Kind: Integer): Boolean;
@@ -1099,6 +1119,13 @@ type
     /// Returns the resolved Skia font for the current Font settings.
     /// </summary>
     function AcquireFont: ISkFont;
+    /// Native font rasterization settings; also saved by SaveState/RestoreState.
+    property FontEdging: TSkFontEdging read FFontEdging write SetFontEdging;
+    property FontHinting: TSkFontHinting read FFontHinting write SetFontHinting;
+    property FontSubpixel: Boolean read FFontSubpixel write SetFontSubpixel;
+    /// Copies caller-owned pixels before drawing; nil/empty pixmaps are no-ops.
+    procedure DrawPixmap(X, Y: Integer; const Pixmap: ISkPixmap); overload;
+    procedure DrawPixmap(const Dest: TRect; const Pixmap: ISkPixmap); overload;
 
     /// <summary>
     /// Strokes a counterclockwise elliptical arc between two radial endpoints.
@@ -1440,6 +1467,8 @@ type
     /// Returns an immutable image snapshot of the raster surface.
     /// </summary>
     function Snapshot: ISkImage;
+    /// Reads surface pixels into caller-owned pixmap storage; nil/empty returns False.
+    function ReadPixels(const Dest: ISkPixmap; SrcX: Integer = 0; SrcY: Integer = 0): Boolean;
     /// <summary>
     /// Raster surface width in pixels.
     /// </summary>
@@ -1520,7 +1549,7 @@ function PointF(const X, Y: Single): TPointF;
 
 implementation
 
-uses {$IFDEF MSWINDOWS}Vcl.GraphUtil.MetafileParser{$IFDEF FPC}, IntfGraphics, FPImage{$ENDIF}
+uses System.Skia.API, {$IFDEF MSWINDOWS}Vcl.GraphUtil.MetafileParser{$IFDEF FPC}, IntfGraphics, FPImage{$ENDIF}
 {$ELSE}IntfGraphics, FPImage, GraphType, Forms{$ENDIF};
 
 {$I SkiaCanvas.Unicode.inc}
@@ -3402,6 +3431,8 @@ begin
 end;
 
 constructor TSkiaCanvas.Create(ACanvas: ISkCanvas; AOwnsCanvas: Boolean);
+var
+  NativeFont: ISkFont;
 begin
   inherited Create;
   if ACanvas = nil then
@@ -3415,6 +3446,10 @@ begin
   FPen.OnChange := PenChanged;
   FFont := TSkiaFont.Create;
   FFont.OnChange := FontChanged;
+  NativeFont := FResources.AcquireFont(FFont);
+  FFontEdging := NativeFont.Edging;
+  FFontHinting := NativeFont.Hinting;
+  FFontSubpixel := NativeFont.Subpixel;
   FCopyMode := cmSrcCopy;
   FNativeCanvasHandle := NativeUInt(FCanvas.Handle);
   FClipDepth := -1;
@@ -3545,6 +3580,10 @@ begin
   St.Clips := Copy(FClips);
   St.SaveCount := FCanvas.GetSaveCount;
   St.TextToCurves := FTextToCurves;
+  St.FontEdging := FFontEdging;
+  St.FontHinting := FFontHinting;
+  St.FontSubpixel := FFontSubpixel;
+  St.FontRenderingCustomized := FFontRenderingCustomized;
 end;
 
 procedure TSkiaCanvas.ApplyState(St: TSkiaCanvasState);
@@ -3558,6 +3597,10 @@ begin
   FClipDepth := St.ClipDepth;
   FClips := Copy(St.Clips);
   FTextToCurves := St.TextToCurves;
+  FFontEdging := St.FontEdging;
+  FFontHinting := St.FontHinting;
+  FFontSubpixel := St.FontSubpixel;
+  FFontRenderingCustomized := St.FontRenderingCustomized;
   FCanvas.SetMatrix(FMatrix);
 end;
 
@@ -3663,7 +3706,86 @@ end;
 function TSkiaCanvas.AcquireFont: ISkFont;
 begin
   Result := FResources.AcquireFont(FFont);
+  if (Result.Edging <> FFontEdging) or (Result.Hinting <> FFontHinting) or
+    (Result.Subpixel <> FFontSubpixel) then
+  begin
+    { Never mutate a cached font already returned to another caller. }
+    Result := TSkFont.Create(Result);
+    ConfigureFont(Result);
+  end;
 end;
+
+procedure TSkiaCanvas.ConfigureFont(const AFont: ISkFont);
+begin
+  AFont.Edging := FFontEdging;
+  AFont.Hinting := FFontHinting;
+  AFont.Subpixel := FFontSubpixel;
+end;
+
+procedure TSkiaCanvas.SetFontEdging(Value: TSkFontEdging);
+begin
+  FFontEdging := Value;
+  FFontRenderingCustomized := True;
+end;
+
+procedure TSkiaCanvas.SetFontHinting(Value: TSkFontHinting);
+begin
+  FFontHinting := Value;
+  FFontRenderingCustomized := True;
+end;
+
+procedure TSkiaCanvas.SetFontSubpixel(Value: Boolean);
+begin
+  FFontSubpixel := Value;
+  FFontRenderingCustomized := True;
+end;
+
+procedure TSkiaCanvas.ConfigureParagraphStyle(const Style: ISkParagraphStyle);
+var
+  TextStyleObject: TSkTextStyle;
+  TextStyle: ISkTextStyle;
+begin
+  if not FFontRenderingCustomized then
+    Exit;
+  TextStyleObject := TSkTextStyle.Create;
+  TextStyle := TextStyleObject;
+  TextStyleObject.FontEdging := FFontEdging;
+  TextStyleObject.FontHinting := FFontHinting;
+  TextStyleObject.Subpixel := FFontSubpixel;
+  Style.TextStyle := TextStyle;
+end;
+
+procedure TSkiaCanvas.DrawPixmap(X, Y: Integer; const Pixmap: ISkPixmap);
+begin
+  if Pixmap <> nil then
+    DrawPixmap(Rect(X, Y, X + Pixmap.Width, Y + Pixmap.Height), Pixmap);
+end;
+
+procedure TSkiaCanvas.DrawPixmap(const Dest: TRect; const Pixmap: ISkPixmap);
+var
+  Image: ISkImage;
+begin
+  if (Pixmap = nil) or (Pixmap.Pixels = nil) or
+    (Pixmap.Width <= 0) or (Pixmap.Height <= 0) then
+    Exit;
+  if not BeginOperation(2) then
+    Exit;
+  try
+    Image := TSkImage.MakeRasterCopy(Pixmap);
+    if Image <> nil then
+      TransferImage(Image, RectF(0, 0, Image.Width, Image.Height), RectToRectF(Dest));
+  finally
+    EndOperation;
+  end;
+end;
+
+
+{$IFNDEF FPC}
+constructor TSkiaPixmapHelper.Create;
+begin
+  Wrap(sk4d_pixmap_create2());
+end;
+{$ENDIF}
 
 { Convert the VCL counterclockwise arc to Skia angles: clockwise from the positive X axis, with a negative sweep. }
 function TSkiaCanvas.ArcAngles(X1, Y1, X2, Y2, X3, Y3, X4, Y4: Integer; out StartAngle, SweepAngle: Single): TRectF;
@@ -4389,13 +4511,14 @@ end;
 
 {$ENDIF}
 
-{ Inspect TObject first: TCanvas and TSkiaCanvas are currently siblings.
+{ TPersistent is the common canvas ancestor in both Delphi and FPC.
+  The FPC TCustomCanvas adapter is separate from the LCL TCanvas hierarchy.
   Borrow the existing Skia source; never capture it through HDC/RGB pixels. }
-function BltSkiaCanvasSource(Canvas: TCanvas): TSkiaCanvas;
+function BltSkiaCanvasSource(Canvas: TPersistent): TSkiaCanvas;
 begin
   Result := nil;
-  if TObject(Canvas) is TSkiaCanvas then
-    Result := TSkiaCanvas(TObject(Canvas));
+  if Canvas is TSkiaCanvas then
+    Result := TSkiaCanvas(Canvas);
 end;
 
 { Ordinary native canvases expose RGB pixels. Skia sources are dispatched by
@@ -4951,7 +5074,7 @@ begin
     Paint := TSkPaint.Create;
     Paint.Style := TSkPaintStyle.Fill;
     Paint.Color := ColorToAlphaColor(FFont.Color, FFont.Alpha);
-    Paint.AntiAlias := True;
+    Paint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
     { Skia draws at the baseline; its negative ascent converts the VCL top coordinate. }
     Fnt.GetMetrics(Metrics);
     Baseline := Y - Metrics.Ascent;
@@ -4963,7 +5086,7 @@ begin
       LinePaint := TSkPaint.Create;
       LinePaint.Style := TSkPaintStyle.Fill;
       LinePaint.Color := Paint.Color;
-      LinePaint.AntiAlias := True;
+      LinePaint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
       if fsUnderline in FFont.Style then
       begin
 
@@ -5016,8 +5139,7 @@ begin
       if Face <> nil then
       begin
         Font := TSkFont.Create(Face, Font.Size);
-        Font.Subpixel := True;
-        Font.Hinting := TSkFontHinting.None;
+        ConfigureFont(Font);
       end;
     end;
 {$ENDIF}
@@ -5027,6 +5149,7 @@ begin
     Provider := TSkTypefaceFontProvider.Create;
     Provider.RegisterTypeface(Font.Typeface, 'CanvasPrivateFont');
     Style := TSkParagraphStyle.Create;
+    ConfigureParagraphStyle(Style);
     if FShapingRTL then
       Style.TextDirection := TSkTextDirection.RightToLeft;
     Style.TextStyle.FontFamilies := TArray<string>.Create('CanvasPrivateFont');
@@ -5089,7 +5212,7 @@ begin
   Paint := TSkPaint.Create;
   Paint.Style := TSkPaintStyle.Fill;
   Paint.Color := ColorToAlphaColor(FFont.Color, FFont.Alpha);
-  Paint.AntiAlias := True;
+  Paint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
 
   if Data.Blob <> nil then
     BlobPaths(Data.Blob, X, Y, Data.WidthPx, Data.SizePx, Paint)
@@ -5126,7 +5249,7 @@ begin
     LinePaint := TSkPaint.Create;
     LinePaint.Style := TSkPaintStyle.Fill;
     LinePaint.Color := Paint.Color;
-    LinePaint.AntiAlias := True;
+    LinePaint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
     if fsUnderline in FFont.Style then
       FCanvas.DrawRect(RectF(X, Baseline + Metrics.Descent - 1, X + Data.WidthPx, Baseline + Metrics.Descent), LinePaint);
     if fsStrikeOut in FFont.Style then
@@ -5633,6 +5756,14 @@ begin
   finally
     UnlockPixels;
   end;
+end;
+
+function TSkiaBitmapCanvas.ReadPixels(const Dest: ISkPixmap; SrcX, SrcY: Integer): Boolean;
+begin
+  Result := (Dest <> nil) and (Dest.Pixels <> nil) and
+    (Dest.Width > 0) and (Dest.Height > 0);
+  if Result then
+    Result := FSurface.ReadPixels(Dest, SrcX, SrcY);
 end;
 
 function TSkiaBitmapCanvas.Snapshot: ISkImage;

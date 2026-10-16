@@ -3,7 +3,7 @@
   "native_version": "151.0.1",
   "source_revision": "e5e4933ea025f5e1b8a07d038e38869e205deb06",
   "pascal_api": "7.3.0",
-  "api_imports": 806,
+  "api_imports": 815,
   "objects": 60,
   "imports": [
     "AcquireSRWLockExclusive",

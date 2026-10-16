@@ -300,6 +300,8 @@ begin
 end;
 
 {$I SkiaBltTests.inc}
+{$I SkiaBindingsTests.inc}
+{$I SkiaRasterOptionsTests.inc}
 {$I SkiaTextPathTests.inc}
 
 procedure T_BitBlt;
@@ -793,6 +795,8 @@ begin
   T_MetafileRecordPlayback;
   T_MetafileDrawAfterFinish;
   T_CopyRect;
+  TestUpdatedSkiaBindings;
+  TestCanvasRasterSettingsAndPixmap;
   T_BltNativeSources;
   T_BitBlt;
   T_StretchBlt;

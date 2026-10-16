@@ -1,4 +1,4 @@
-﻿{ Drawing examples for the public canvas API. }
+{ Drawing examples for the public canvas API. }
 unit SkiaAtlasScenes;
 {$IFDEF FPC}{$MODE DELPHIUNICODE}{$CODEPAGE UTF8}{$ENDIF}
 interface
@@ -424,21 +424,26 @@ begin
 end;
 
 procedure DrawTextFonts(C: TSkiaCanvas);
-var X,Y,I,TW,TH: Integer; R: TRect; S: string; Size: TSize; F: TSkiaFont; VclF: TFont;
+var X,Y,I,TW,TH,Saved: Integer; R: TRect; S: string; Size: TSize; F: TSkiaFont; VclF: TFont;
   Manager: TSkiaFontManager; Custom: ISkTypeface; Stream: TMemoryStream;
-  D: TSkiaBitmapCanvas; Bmp: TBitmap; FontFile: string; Metrics: TSkFontMetrics;
+  FontFile: string; Metrics: TSkFontMetrics;
   Flags: TTextFormat;
 begin
-  Panel(C,0,0,'TextOut / curves / regular text','Raster comparison: native text vs GDI shaped contours',X,Y);
-  D:=TSkiaBitmapCanvas.Create(420,165); Bmp:=TBitmap.Create;
+  Panel(C,0,0,'Font rasterization options','FontEdging / FontHinting / FontSubpixel',X,Y);
+  Saved:=C.SaveState;
   try
-    D.Brush.Color:=clWhite; D.FillRect(Types.Rect(0,0,420,165)); D.Brush.Style:=bsClear;
-    D.Font.Name:='Times New Roman'; D.Font.Height:=-36; D.Font.Color:=Ink;
-    D.TextToCurves:=False; D.TextOut(10,15,'AVATAR / office');
-    D.TextToCurves:=True; D.TextOut(10,90,'AVATAR / office'); D.Flush(Bmp);
-    C.Draw(X+22,Y+98,Bmp);
-  finally Bmp.Free; D.Free; end;
-  Note(C,X,Y,'Both text modes export portable vector outlines.');
+    C.Brush.Style:=bsSolid; C.Brush.Color:=clWhite;
+    C.FillRect(Types.Rect(X+22,Y+98,X+442,Y+263)); C.Brush.Style:=bsClear;
+    C.Font.Name:='Times New Roman'; C.Font.Height:=-24; C.Font.Color:=Ink;
+    C.TextToCurves:=False;
+    C.FontEdging:=TSkFontEdging.Alias; C.FontHinting:=TSkFontHinting.None; C.FontSubpixel:=False;
+    C.TextOut(X+32,Y+110,'Alias / None / subpixel off');
+    C.FontEdging:=TSkFontEdging.AntiAlias; C.FontHinting:=TSkFontHinting.Normal; C.FontSubpixel:=True;
+    C.TextOut(X+32,Y+160,'AntiAlias / Normal / subpixel on');
+    C.FontEdging:=TSkFontEdging.SubpixelAntiAlias; C.FontHinting:=TSkFontHinting.Full;
+    C.TextOut(X+32,Y+210,'SubpixelAntiAlias / Full');
+  finally C.RestoreState(Saved); end;
+  Note(C,X,Y,'Raster glyph settings; recording canvases retain vector outlines.');
   Panel(C,1,0,'TextRect alignment + clipped overload','tfLeft / tfCenter / tfRight / explicit X,Y',X,Y);
   for I:=0 to 2 do begin
     R:=Types.Rect(X+25,Y+95+I*54,X+435,Y+140+I*54); Backdrop(C,R.Left,R.Top,R.Width,R.Height);
@@ -470,21 +475,23 @@ begin
   Note(C,X,Y,'TFont.Assign reads VCL properties / real LOGFONT handles.');
   Panel(C,0,2,'Custom typeface registration','LoadTypefaceFromFile / FromStream / register / unregister',X,Y);
   Manager:=TSkiaFontManager.Create; Stream:=TMemoryStream.Create;
-  D:=TSkiaBitmapCanvas.Create(420,160); Bmp:=TBitmap.Create;
+  Saved:=C.SaveState;
   try
-    
     {$IFDEF MSWINDOWS}FontFile:=SysUtils.GetEnvironmentVariable('WINDIR')+'\Fonts\cour.ttf';{$ELSE}
     FontFile:='/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf';{$ENDIF}
     Custom:=Manager.LoadTypefaceFromFile(FontFile); Stream.LoadFromFile(FontFile);
     Custom:=Manager.LoadTypefaceFromStream(Stream);
-    
-    D.FontManager.RegisterTypeface('AtlasCustom',Custom);
-    D.Brush.Color:=clWhite; D.FillRect(Types.Rect(0,0,420,160)); D.Brush.Style:=bsClear;
-    D.TextToCurves:=False; D.Font.Name:='AtlasCustom'; D.Font.Height:=-28; D.Font.Color:=Ink;
-    D.TextOut(10,20,'Custom typeface: 012345');
-    D.FontManager.UnregisterTypeface('AtlasCustom'); D.TextOut(10,90,'Fallback: 012345'); D.Flush(Bmp);
-    C.Draw(X+22,Y+100,Bmp); Manager.Clear;
-  finally Bmp.Free; D.Free; Stream.Free; Manager.Free; end;
+    C.FontManager.RegisterTypeface('AtlasCustom',Custom);
+    C.Brush.Style:=bsSolid; C.Brush.Color:=clWhite;
+    C.FillRect(Types.Rect(X+22,Y+100,X+442,Y+260)); C.Brush.Style:=bsClear;
+    C.TextToCurves:=False; C.Font.Name:='AtlasCustom'; C.Font.Height:=-28; C.Font.Color:=Ink;
+    C.TextOut(X+32,Y+120,'Custom typeface: 012345');
+    C.FontManager.UnregisterTypeface('AtlasCustom');
+    C.TextOut(X+32,Y+190,'Fallback: 012345'); Manager.Clear;
+  finally
+    C.FontManager.UnregisterTypeface('AtlasCustom');
+    C.RestoreState(Saved); Stream.Free; Manager.Free;
+  end;
   Note(C,X,Y,'Custom faces support shaped outlines and formatted text.');
   Panel(C,1,2,'Opaque / transparent text backgrounds','Brush.Style bsSolid vs bsClear; clipped rendering',X,Y);
   Backdrop(C,X+25,Y+100,410,165);
@@ -497,6 +504,7 @@ end;
 procedure DrawRasterResources(C: TSkiaCanvas);
 var EmfFile:string;X,Y,I,J: Integer; D: TSkiaBitmapCanvas; Bmp: TBitmap; Manager: TSkiaResourceManager;
   B: TSkiaBrush; P: TSkiaPen; F: TFont; Fill1,Fill2,Stroke: ISkPaint; Font: ISkFont;
+  Pixmap: ISkPixmap; PixmapPixels: array[0..3] of Cardinal;
   LF: TLogFontW; Key: string; Em,H: Integer; G: TArray<TGdiShapedGlyph>; Path: ISkPath;
   Advance: Single; Bounds: TRectF; Pic: ISkPicture; MC: TSkiaMetafileCanvas; MS: TMemoryStream;
   {$IFDEF MSWINDOWS}Graphic: TMetafile;{$ENDIF} Surface: ISkSurface; Counter: TAtlasChangeCounter; Wrapper: TSkiaCanvas;
@@ -510,7 +518,9 @@ begin
     Wrapper:=TSkiaCanvas.Create(D.SkCanvas,False);
     try Wrapper.Pen.Color:=clBlue; Wrapper.MoveTo(10,75); Wrapper.LineTo(145,10); finally Wrapper.Free; end;
     D.Flush(Bmp); C.StretchDraw(Types.Rect(X+25,Y+105,X+435,Y+255),Bmp);
-    Note(C,X,Y,Format('Pixels[0,0]=$%x; Snapshot=%dx%d',[Cardinal(D.Pixels[0,0]),D.Snapshot.Width,D.Snapshot.Height]));
+    Pixmap:=TSkPixmap.Create(TSkImageInfo.Create(2,2,TSkColorType.BGRA8888,TSkAlphaType.Unpremul),@PixmapPixels[0],8);
+    if D.ReadPixels(Pixmap,10,10) then C.DrawPixmap(Types.Rect(X+390,Y+105,X+430,Y+145),Pixmap);
+    Note(C,X,Y,'Pixels / Flush / Snapshot / ReadPixels / DrawPixmap.');
   finally Bmp.Free; D.Free; end;
   Panel(C,1,0,'FloodFill: surface and border','All targets; seed and boundary color select the filled area',X,Y);
   C.SaveState;

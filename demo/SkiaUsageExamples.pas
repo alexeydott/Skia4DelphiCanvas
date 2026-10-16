@@ -166,6 +166,9 @@ begin
 
     { This scene works on both raster and recording canvases.
       TextToCurves enables shaped text with portable glyph outlines. }
+    Canvas.FontEdging := TSkFontEdging.AntiAlias;
+    Canvas.FontHinting := TSkFontHinting.None;
+    Canvas.FontSubpixel := True;
     Canvas.TextToCurves := True;
     Canvas.Brush.Style := bsClear;
     Canvas.Font.Name := 'Arial';

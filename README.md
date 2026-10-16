@@ -93,10 +93,59 @@ bash demo/run_demos_linux.sh --verify
 
 ## Skia Version
 
-Use **Skia4Delphi 7.3.0 Pascal API with native Skia 151.0.1** for every
+Use **Skia4Delphi 7.3.0 Pascal API at `fce5db2` with native Skia 151.0.1** for every
 configuration below. The DLLs and static objects are built from the same
 `sk4d/m151` checkout, revision `e5e4933ea025f5e1b8a07d038e38869e205deb06`.
 Do not combine these bindings with the old 6.x runtime package.
+
+The Pascal units are pinned to upstream
+[`fce5db2ffcf547f597f5f0a6b2125d779d5598e3`](https://github.com/skia4delphi/skia4delphi/commit/fce5db2ffcf547f597f5f0a6b2125d779d5598e3).
+This adds `TSkFontFeature` and read-only `TSkTextStyle.FontFeatures` / `Shadows`
+through `TSkTextStyleHelper`. The intervening upstream updates also add
+font edging/hinting/subpixel properties and an empty `TSkPixmap.Create`,
+and correct region and clipped-region enumeration. These APIs are available
+in Delphi and FPC, with DLL/static linking on Windows and shared linking on Linux.
+The shared regression tests check array values, ownership, resets, empty arrays,
+constructor lifetime and first/last region rectangles. FPC shadow transfers use
+explicit C record padding and field conversion to preserve the native ABI.
+
+`TSkiaCanvas` exposes `FontEdging`, `FontHinting` and `FontSubpixel`:
+
+```pascal
+Canvas.FontEdging := TSkFontEdging.AntiAlias;
+Canvas.FontHinting := TSkFontHinting.Normal;
+Canvas.FontSubpixel := True;
+```
+
+The defaults retain the previous platform behavior. `SaveState`/`RestoreState`
+include all three settings. Acquired fonts retain their settings when later canvas
+changes occur. With explicit settings and `TextToCurves=False`, raster targets
+use native Skia glyph rendering. Outline text and PDF/SVG recordings retain
+vector contours; edging controls contour antialiasing, while hinting applies
+to native raster glyphs. `FontSubpixel` enables fractional glyph positioning;
+`SubpixelAntiAlias` requests LCD antialiasing. Skia may use grayscale antialiasing
+when the target does not support LCD rendering.
+
+`ISkPixmap` and `TSkPixmap` are also exported by `Vcl.Graphics.Skia`, including
+the empty constructor used as a destination for `ExtractSubset`:
+
+```pascal
+Source := TSkPixmap.Create(ImageInfo, PixelBuffer, RowBytes);
+Subset := TSkPixmap.Create;
+Source.ExtractSubset(Subset, Rect(0, 0, 16, 16));
+Canvas.DrawPixmap(20, 30, Subset);
+Canvas.DrawPixmap(Rect(20, 30, 84, 94), Subset); // scale to the destination
+BitmapCanvas.ReadPixels(DestinationPixmap, 20, 30);
+```
+
+Pixmap constructors borrow the pixel buffer; the caller keeps its storage alive.
+`DrawPixmap` copies the pixels before drawing, so recordings remain valid after
+source changes or release. It honors canvas transforms, clipping and copy mode.
+Nil/empty sources are no-ops. `TSkiaBitmapCanvas.ReadPixels` writes to caller-owned
+pixmap storage in device coordinates, independently of the current transform and
+clip, and returns `False` for nil/empty destinations or nonoverlapping reads.
+The destination pixmap must already describe valid allocated storage.
+Atlas pages `07-text-fonts` and `08-raster-resources` demonstrate these APIs.
 
 | Target | DLL deployment | Static objects |
 | --- | --- | --- |
@@ -180,15 +229,42 @@ enum cast under `runtime/build/*/compat` for LLVM-MinGW 18 and redirects its
 generated Ninja compile rule. The pinned upstream sources remain unchanged.
 
 Per-platform manifests record native archive and COFF hashes and verify all
-806 imported C API functions.
+815 imported C API functions.
 
-The pinned native revision was rebuilt on Windows and Linux and passed the full
-unfiltered Delphi/FPC test matrix on 2026-10-16: 6653 checks per Delphi
-configuration, 6266 per Windows FPC configuration, and 690 on Linux, with no
-failures or Pascal heap leaks. All nine demo configurations passed raster/PDF/SVG
-comparison, including TextOnPath. Static test and demo executables were verified
-to have no Skia DLL dependency. Concurrent EMF reference generation was also
-verified while the test executables were reading the references.
+The complete test suite, including edging/hinting/subpixel and pixmap support,
+passed on 2026-10-16 with `SKIA_EMF_FILTER` unset in every configuration:
+
+| Compiler / platform | Linking tested | Checks per configuration | Failures |
+| --- | --- | ---: | ---: |
+| Delphi Win32 | DLL and static | 6774 | 0 |
+| Delphi Win64 | DLL and static | 6774 | 0 |
+| FPC 3.3.1 Win32 | DLL and static | 6387 | 0 |
+| FPC 3.3.1 Win64 | DLL and static | 6387 | 0 |
+| FPC 3.3.1 Linux x86-64 through WSL | Shared library | 811 | 0 |
+
+Total: **53,455 checks across nine configurations**, with zero FPC heap leaks.
+Each Windows configuration compares all 727 EMF fixtures at 384x256 and 768x512
+and exports their PDF/SVG files. Coverage includes all BLT operations, TextOnPath,
+text-flag combinations, 37 binding regressions and 31 canvas rasterization/pixmap
+checks. The latter exercise rendering pixels, saved settings, acquired-font
+isolation, padded rows, alpha, clipping and recording ownership.
+No additional code fixes were needed for this unfiltered run.
+
+To run the complete Windows matrix from the project root:
+
+```powershell
+Remove-Item Env:SKIA_EMF_FILTER -ErrorAction SilentlyContinue
+./tests/run_tests.cmd
+./scripts/build_delphi_static.ps1 -Target tests -Platforms win32,win64
+foreach ($platform in @('win32', 'win64')) {
+    ./scripts/build_fpc_native.ps1 -Target tests -Platform $platform
+    ./scripts/build_fpc_native.ps1 -Target tests -Platform $platform -StaticSkiaRoot "$PWD/runtime/windows-static"
+}
+```
+
+Use the Linux toolchain settings and `unset SKIA_EMF_FILTER` shown above for WSL.
+All nine demo configurations also passed raster/PDF/SVG comparison, including
+TextOnPath. Static test and demo executables have no Skia DLL dependency.
 
 The packager resolves C++ COMDAT/weak symbols before Pascal linking, keeps
 functions and large tables intact, and splits code at function boundaries to
@@ -330,9 +406,8 @@ Shared tests exercise offsets, alignment, path direction, mirrors, wrapping,
 orientation, clipping/transforms, private fonts, invalid input and vector PDF/SVG
 recording under Delphi Win32/Win64 and FPC Windows/Linux.
 
-The 21 dedicated checks are included in the complete unfiltered suite: 6653/6653
-under Delphi and 6266/6266 under Windows FPC in each DLL/static Win32/Win64
-configuration, and 690/690 under Linux FPC 3.3.1. FPC reports zero unfreed Pascal
+The 21 dedicated checks are included in the shared Delphi/FPC suite for
+DLL/static Win32/Win64 and Linux FPC 3.3.1. FPC reports zero unfreed Pascal
 blocks.
 The demo export audit checks all 12 atlas pages and quickstart; page 12 must have
 no SVG image elements or PDF image objects.

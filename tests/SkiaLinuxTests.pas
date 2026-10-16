@@ -25,6 +25,8 @@ end;
 {$I SkiaImageCodecTests.inc}
 {$I SkiaThreadTests.inc}
 {$I SkiaBltTests.inc}
+{$I SkiaBindingsTests.inc}
+{$I SkiaRasterOptionsTests.inc}
 {$I SkiaTextPathTests.inc}
 
 procedure TestGenericGraphic;
@@ -188,6 +190,8 @@ end;
 
 begin
   Writeln('Native Linux / FPC / Skia ',TSkVersion.ToString);
+  TestUpdatedSkiaBindings;
+  TestCanvasRasterSettingsAndPixmap;
   T_BltNativeSources;
   TestNativeGlyphCache;
   TestCopyRect;

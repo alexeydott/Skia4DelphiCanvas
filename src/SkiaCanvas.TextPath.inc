@@ -134,6 +134,7 @@ begin
     Provider := TSkTypefaceFontProvider.Create;
     Provider.RegisterTypeface(Font.Typeface, 'CanvasPathFont');
     Style := TSkParagraphStyle.Create;
+    ConfigureParagraphStyle(Style);
     Style.TextStyle.FontFamilies := TArray<string>.Create('CanvasPathFont');
     Style.TextStyle.FontSize := Font.Size;
     Style.TextStyle.LetterSpacing := Options.LetterSpacing;
@@ -157,7 +158,7 @@ begin
         Start := Start + LengthPx - Paragraph.MaxIntrinsicWidth;
     end;
     Paint := TSkPaint.Create;
-    Paint.AntiAlias := True;
+    Paint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
     Paint.Color := ColorToAlphaColor(FFont.Color, FFont.Alpha);
     SX := 1;
     SY := 1;
