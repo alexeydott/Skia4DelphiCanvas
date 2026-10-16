@@ -1,0 +1,4 @@
+#define SK4D_VERSION "151.0.1"
+Skia4Delphi 7.3.0 Pascal API; native SVG gradients
+Ubuntu clang version 21.1.8 (6ubuntu1)
+a8b3cc5a4e1b95fb419b51a39d84baa64ea64d21e1e524005a6862b44f41c3a8  libsk4d.so

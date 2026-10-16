@@ -1,0 +1,884 @@
+{
+  "pages": [
+    "01-typography",
+    "02-primitives",
+    "03-brushes",
+    "04-pens",
+    "05-transfers",
+    "06-clips-transforms",
+    "07-text-fonts",
+    "08-raster-resources",
+    "09-rop-formatting",
+    "10-unicode-fonts",
+    "11-unicode-rtl",
+    "12-text-on-path"
+  ],
+  "classes": {
+    "TSkiaBrush": {
+      "Alpha": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "Assign": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "Destroy": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated",
+        "via": "Free in try/finally releases constructed demo objects"
+      },
+      "Gradient": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "GradientEndColor": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "GradientStartColor": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "IsVisible": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "Pattern": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaPen": {
+      "Alpha": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "Assign": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "DashPattern": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "IsVisible": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "MiterLimit": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "StrokeCap": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "StrokeJoin": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaFont": {
+      "Alpha": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "Assign": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaFontManager": {
+      "AcquireTypeface": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Clear": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Destroy": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated",
+        "via": "Free in try/finally releases constructed demo objects"
+      },
+      "FontKey": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "GetLogFont": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "LoadTypefaceFromFile": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "LoadTypefaceFromStream": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "OnChange": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "RegisterTypeface": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "UnregisterTypeface": {
+        "pages": [
+          7,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "MatchTypefaceForText": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
+      "CollectionFaceCount": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
+      "MatchCollectionTypeface": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaResourceManager": {
+      "AcquireFillPaint": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "AcquireFont": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "AcquireStrokePaint": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Destroy": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated",
+        "via": "Free in try/finally releases constructed demo objects"
+      },
+      "FontManager": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "InvalidateAll": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "InvalidateBrush": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "InvalidateFont": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "InvalidatePen": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaGdiGlyphCache": {
+      "Clear": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated",
+        "via": "TSkiaBitmapCanvas.Create constructs and exposes GlyphCache"
+      },
+      "Destroy": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated",
+        "via": "Free in try/finally releases constructed demo objects"
+      },
+      "GetCharHeight": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "GetEmSquare": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "GetGlyphPathByIndex": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "ShapeText": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "LastShapeUsedOpenType": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
+      "Lock": {
+        "pages": [
+          1,
+          7
+        ],
+        "status": "demonstrated",
+        "via": "Canvas Lock/Unlock protects the owned GlyphCache for a complete drawing transaction"
+      },
+      "Unlock": {
+        "pages": [
+          1,
+          7
+        ],
+        "status": "demonstrated",
+        "via": "Canvas Lock/Unlock protects the owned GlyphCache for a complete drawing transaction"
+      }
+    },
+    "TSkiaCanvasState": {
+      "Create": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated",
+        "via": "SaveState / RestoreState exercise snapshot creation and destruction"
+      },
+      "Destroy": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated",
+        "via": "SaveState / RestoreState exercise snapshot creation and destruction"
+      }
+    },
+    "TSkiaCanvas": {
+      "AcquireFont": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "AngleArc": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Arc": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "ArcTo": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "BitBlt": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "Brush": {
+        "pages": [
+          3
+        ],
+        "status": "demonstrated"
+      },
+      "BrushCopy": {
+        "pages": [
+          5
+        ],
+        "status": "implemented"
+      },
+      "Chord": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "CopyMode": {
+        "pages": [
+          5,
+          9
+        ],
+        "status": "implemented"
+      },
+      "CopyRect": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "Create": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "DPToLP": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "Destroy": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated",
+        "via": "Free in try/finally releases constructed demo objects"
+      },
+      "Draw": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "DrawFocusRect": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Ellipse": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "ExcludeClipRect": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "FillRect": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "FloodFill": {
+        "pages": [
+          8
+        ],
+        "status": "implemented"
+      },
+      "Font": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "FontManager": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "FrameRect": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "GetWorldTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "GlyphCache": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "IntersectClipRect": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "LPToDP": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "LineTo": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "MaskBlt": {
+        "pages": [
+          5
+        ],
+        "status": "implemented"
+      },
+      "MoveTo": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Pen": {
+        "pages": [
+          4
+        ],
+        "status": "demonstrated"
+      },
+      "Pie": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "PlgBlt": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "PolyBezier": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "PolyBezierTo": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Polygon": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Polyline": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Rectangle": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "Refresh": {
+        "pages": [
+          8
+        ],
+        "status": "implemented"
+      },
+      "ResetClip": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "ResetWorldTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "RestoreState": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "RotateTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "RoundRect": {
+        "pages": [
+          2
+        ],
+        "status": "demonstrated"
+      },
+      "SaveState": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "ScaleTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "SetClipRect": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "SetClipRegion": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "SetWorldTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "SkCanvas": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "StretchBlt": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "StretchDraw": {
+        "pages": [
+          5
+        ],
+        "status": "demonstrated"
+      },
+      "TextExtent": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "TextOut": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "TextRect": {
+        "pages": [
+          7
+        ],
+        "status": "implemented"
+      },
+      "TextToCurves": {
+        "pages": [
+          7
+        ],
+        "status": "demonstrated"
+      },
+      "TranslateTransform": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "SetClipPath": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
+      "Lock": {
+        "pages": [
+          1
+        ],
+        "status": "demonstrated"
+      },
+      "TryLock": {
+        "pages": [
+          1
+        ],
+        "status": "demonstrated"
+      },
+      "Unlock": {
+        "pages": [
+          1
+        ],
+        "status": "demonstrated"
+      },
+      "TextOnPath": {
+        "pages": [
+          12
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaBitmapCanvas": {
+      "Create": {
+        "pages": [
+          5,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Flush": {
+        "pages": [
+          5,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Height": {
+        "pages": [
+          5,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Snapshot": {
+        "pages": [
+          5,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Width": {
+        "pages": [
+          5,
+          8
+        ],
+        "status": "demonstrated"
+      }
+    },
+    "TSkiaMetafileCanvas": {
+      "Create": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "FinishRecording": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Height": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Playback": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "Width": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      }
+    }
+  },
+  "additional_cases": {
+    "Pen.Mode": {
+      "page": 4,
+      "values": 16,
+      "status": "implemented"
+    },
+    "Pen.Style": {
+      "page": 4,
+      "values": 7
+    },
+    "Brush.Style": {
+      "page": 3,
+      "values": 8
+    },
+    "TextRect overloads": {
+      "page": 7
+    },
+    "Draw overloads": {
+      "page": 5
+    },
+    "Playback overloads": {
+      "page": 8
+    },
+    "ClipRect PenPos CanvasOrientation Pixels TextWidth TextHeight": {
+      "pages": [
+        2,
+        6,
+        7,
+        8
+      ]
+    },
+    "SVG Difference clip": {
+      "page": 6,
+      "status": "implemented"
+    },
+    "Regular text / custom font": {
+      "page": 7,
+      "status": "implemented"
+    }
+  },
+  "color_helpers": [
+    "ColorToAlphaColor",
+    "AlphaColorToColor"
+  ],
+  "backends": {
+    "Delphi": "Native VCL / Skia; glyph shaping uses Windows Uniscribe",
+    "FPC": "Native Skia with Windows resources, OpenType shaping and real exports"
+  }
+}
