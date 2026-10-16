@@ -1,5 +1,11 @@
 ﻿This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG.
 
+All repository-relative paths and commands below are relative to the project
+root, `D:\projects\externals\Skia4DelphiCanvas` on Windows or
+`/mnt/d/projects/externals/Skia4DelphiCanvas` in WSL. For another clone,
+substitute its root directory. Native sources are in the [Skia submodule](skia);
+installed libraries and static linker inputs are in [runtime](runtime/README.md).
+
 Native Windows builds support Delphi and FPC 3.3.1 or later. Both use the
 vendored Skia4Delphi 7.3.0 `System.Skia` bindings and a matching m151 `sk4d.dll`.
 
@@ -48,6 +54,7 @@ Please keep the `SkiaCanvas.*.inc` implementation files, [Vcl.GraphUtil.Metafile
 The scripts have been exercised with RAD Studio 23.0. From the repository root, run in PowerShell:
 
 ```powershell
+Set-Location D:\projects\externals\Skia4DelphiCanvas
 .\tests\run_tests.cmd
 .\demo\run_demos.cmd
 ```
@@ -70,11 +77,14 @@ sudo apt-get install libgtk2.0-dev libfontconfig1-dev libharfbuzz-dev libfribidi
   xvfb poppler-utils librsvg2-bin python3-pil python3-pypdf
 ```
 
-Run from Linux or WSL:
+Run from Linux or WSL. This example uses the verified local WSL toolchain;
+set the compiler, matching units and Lazarus paths for your installation:
 
 ```bash
-export FPC=/path/to/fpc-3.3.1/bin/fpc
-export LAZARUS_ROOT=/path/to/lazarus
+cd /mnt/d/projects/externals/Skia4DelphiCanvas
+export FPC=/home/at/skia-canvas-toolchain/fpcsrc/compiler/ppcx64
+export FPC_UNITS_ROOT=/home/at/skia-canvas-toolchain/units/x86_64-linux
+export LAZARUS_ROOT=/mnt/d/fpc/lazarus
 export SKIA_LIBRARY_DIR="$PWD/runtime/linux64"
 unset SKIA_EMF_FILTER
 bash tests/run_tests_linux.sh
@@ -85,7 +95,7 @@ bash demo/run_demos_linux.sh --verify
 
 Use **Skia4Delphi 7.3.0 Pascal API with native Skia 151.0.1** for every
 configuration below. The DLLs and static objects are built from the same
-`sk4d/m151` checkout, revision `05fae0ee01e9e21a99355f89f8b5dacad2611a2c`.
+`sk4d/m151` checkout, revision `e5e4933ea025f5e1b8a07d038e38869e205deb06`.
 Do not combine these bindings with the old 6.x runtime package.
 
 | Target | DLL deployment | Static objects |
@@ -121,7 +131,7 @@ $static = "$PWD/runtime/windows-static"
 ./scripts/build_fpc_native.ps1 -Target demo -StaticSkiaRoot $static
 ./scripts/build_fpc_native.ps1 -Target tests -Platform win32 -StaticSkiaRoot $static
 ./scripts/build_fpc_native.ps1 -Target demo -Platform win32 -StaticSkiaRoot $static
-python scripts/verify_static_skia.py demo/build/win32-static/SkiaDemo.exe demo/build/win64-static/SkiaDemo.exe demo/build/fpc-static-win64/SkiaDemo.exe
+python scripts/verify_static_skia.py demo/build/win32-static/SkiaDemo.exe demo/build/win64-static/SkiaDemo.exe demo/build/fpc-static-win32/SkiaDemo.exe demo/build/fpc-static-win64/SkiaDemo.exe
 ```
 
 Outputs are under `tests/build/win32-static`, `tests/build/win64-static`,
@@ -131,28 +141,54 @@ normal or delayed Skia DLL imports, an embedded DLL name, or a DLL beside an EXE
 
 ### Rebuilding the Windows runtimes
 
-The local native checkout is `D:\projects\externals\skia`. Fetch GN and the
-pinned dependencies with upstream `bin/fetch-gn` and `tools/git-sync-deps` first.
+Skia is the `skia` Git submodule, pinned to upstream default branch
+`sk4d/m151` at `e5e4933ea025f5e1b8a07d038e38869e205deb06` (2026-10-16).
+Upstream has no `master` branch. Normal submodule initialization checks out
+this exact revision; use `git submodule update --init --recursive`, without
+`--remote`, to reproduce it. Synchronize the pinned third-party dependencies
+with `-SyncDependencies` on the first Windows build, or `SKIA_SYNC_DEPS=1`
+for the first Linux build. GN is fetched automatically if absent.
 The tested toolchain is LLVM-MinGW 18.1.8 UCRT, with Ninja and Python 3.12.
-The static packager additionally uses GNU Binutils `ld` 2.42 (default:
-`C:\programdata\strawberry\c\bin\ld.exe`; override with `--ld`).
+The static packager additionally uses GNU Binutils `ld` 2.42 from `PATH` (override with `--ld` when running the
+packager directly).
 
 ```powershell
-./scripts/build_native_skia.ps1 -Platform win32 -Linkage dll
+git submodule update --init --recursive
+# LLVM-MinGW 18.1.8 UCRT, extracted into this directory (or another location):
+$env:LLVM_MINGW_ROOT = "$PWD/runtime/toolchains/llvm-mingw-20240619-ucrt-x86_64"
+./scripts/build_native_skia.ps1 -Platform win32 -Linkage dll -SyncDependencies
 ./scripts/build_native_skia.ps1 -Platform win64 -Linkage dll
 ./scripts/build_native_skia.ps1 -Platform win32 -Linkage static
 ./scripts/build_native_skia.ps1 -Platform win64 -Linkage static
-python scripts/prepare_windows_static_m151.py --platform win32
-python scripts/prepare_windows_static_m151.py --platform win64
 ```
 
 DLL builds install in `runtime/win32` or `runtime/win64` and record their version,
-source revision, GN arguments and SHA-256 in `build-info.json`. Native archives
-are `skia/out/static-win32-pascal/sk4d.a` and
-`skia/out/static-win64-pascal/sk4d.a`. The packager writes the ready-to-use
+source revision, GN arguments and SHA-256 in `build-info.json`. All native intermediates are under `runtime/build`, including archives
+`runtime/build/static-win32/sk4d.a` and `runtime/build/static-win64/sk4d.a`.
+Static builds automatically run the packager and write the ready-to-use
 Pascal package to `runtime/windows-static`; `--output` changes that destination.
+Linux builds use the same submodule and output layout:
+
+```bash
+SKIA_SYNC_DEPS=1 bash scripts/build_native_skia_linux.sh
+```
+
+The Linux intermediate directory is `runtime/build/linux64`; the installed
+library is `runtime/linux64/libsk4d.so`. `SKIA_SOURCE_DIR`, `SKIA_BUILD_DIR`
+and `SKIA_RUNTIME_DIR` remain available for explicit overrides. The Windows builder stages a DirectWrite source with an explicit constexpr
+enum cast under `runtime/build/*/compat` for LLVM-MinGW 18 and redirects its
+generated Ninja compile rule. The pinned upstream sources remain unchanged.
+
 Per-platform manifests record native archive and COFF hashes and verify all
 806 imported C API functions.
+
+The pinned native revision was rebuilt on Windows and Linux and passed the full
+unfiltered Delphi/FPC test matrix on 2026-10-16: 6653 checks per Delphi
+configuration, 6266 per Windows FPC configuration, and 690 on Linux, with no
+failures or Pascal heap leaks. All nine demo configurations passed raster/PDF/SVG
+comparison, including TextOnPath. Static test and demo executables were verified
+to have no Skia DLL dependency. Concurrent EMF reference generation was also
+verified while the test executables were reading the references.
 
 The packager resolves C++ COMDAT/weak symbols before Pascal linking, keeps
 functions and large tables intact, and splits code at function boundaries to
@@ -211,7 +247,10 @@ To record the same scene, create `TSkiaMetafileCanvas`, call `DrawQuickStart`, t
 
 ### Demo output
 
-Native demos save files beside their executables:
+Native demos save generated files beside their executables in
+`demo/build/<configuration>/`. The previews below are the checked-in SVG examples
+in `demo/`, independent of generated build output:
+
 ![alt text](demo/01-skia_demo.svg "The small reusable scene")
 ![alt text](demo/02-primitives.svg "primitives")
 ![alt text](demo/03-brushes.svg "brushes")
@@ -344,7 +383,7 @@ end;
 // Replay Picture into a PDF page or SVG canvas.
 ```
 
-[DrawMetafileFile](demo/SkiaUsageExamples.pas) demonstrates loading, locking and state restoration. Atlas page 8 includes a generated EMF and a rotated glyph-index fixture when the repository fixtures are available. The native test runners process all files in `tests/fixtures/emf` at 384x256 and 768x512, compare with GDI and write BMP, reference BMP, SVG and PDF files under their `build/<target>/emf` and `emf/2x` directories. Dense pages are compared using block averages because GDI and Skia use different text antialiasing. Memory-loaded VCL handles are copied with `CopyEnhMetaFile` before enumeration to avoid a Windows GDI handle compatibility issue. A preflight pass recovers supported noncanonical DIB metadata, short palettes, patterned pen aliases and compressed images in memory. Recovered metafiles use consistent native raster composition from the first record. Empty paths and wholly clipped source transfers retain their no-op semantics; unrecoverable data raises an error instead of silently dropping content. Compatibility recovery does not rewrite source fixtures. See [EMF playback and compatibility](docs/emf-playback.md) for the causes and recovery rules.
+[DrawMetafileFile](demo/SkiaUsageExamples.pas) demonstrates loading, locking and state restoration. Atlas page 8 includes a generated EMF and a rotated glyph-index fixture when the repository fixtures are available. The native test runners process all files in `tests/fixtures/emf` at 384x256 and 768x512, compare with GDI and write BMP, reference BMP, SVG and PDF files under `tests/build/<configuration>/emf` and `tests/build/<configuration>/emf/2x`. Dense pages are compared using block averages because GDI and Skia use different text antialiasing. Memory-loaded VCL handles are copied with `CopyEnhMetaFile` before enumeration to avoid a Windows GDI handle compatibility issue. A preflight pass recovers supported noncanonical DIB metadata, short palettes, patterned pen aliases and compressed images in memory. Recovered metafiles use consistent native raster composition from the first record. Empty paths and wholly clipped source transfers retain their no-op semantics; unrecoverable data raises an error instead of silently dropping content. Compatibility recovery does not rewrite source fixtures. The implementation is in [EMF playback](src/SkiaCanvas.Metafile.inc) and [record replay](src/MetafileParser.Replay.inc).
 
 The image audit saves amplified difference PNGs, comparison images and `image-comparison.json`:
 

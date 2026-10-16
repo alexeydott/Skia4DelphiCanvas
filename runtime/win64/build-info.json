@@ -1,8 +1,8 @@
 {
-  "platform": "win64",
-  "native_version": "151.0.1",
-  "sha256": "F54FC035A81CCF5859F99004F26EB104C40B6FEDA7CA348CA1A7DE76E88D5349",
-  "source_revision": "05fae0ee01e9e21a99355f89f8b5dacad2611a2c",
   "pascal_api": "7.3.0",
-  "args": "is_official_build = true\nis_debug = false\ntarget_os = \"win\"\ntarget_cpu = \"x64\"\nis_sk4d_build = true\nis_sk4d_component_build = true\nwin_mingw = \"D:/projects/externals/skia/toolchains/llvm-mingw-20240619-ucrt-x86_64\"\nskia_use_partition_alloc = false\nskia_enable_tools = false\nskia_use_libavif = false\nskia_use_libjxl = false\nskia_use_dng_sdk = false\nskia_use_freetype = false\nskia_use_system_expat = false\nskia_use_system_harfbuzz = false\nskia_use_system_icu = false\nskia_use_system_libjpeg_turbo = false\nskia_use_system_libpng = false\nskia_use_system_libwebp = false\nskia_use_system_zlib = false\nextra_cflags = [ \"-fasynchronous-unwind-tables\", \"-fno-addrsig\", \"-femulated-tls\" ]\nextra_cflags_cc = [ \"-fno-exceptions\" ]\nextra_ldflags = [ \"-static\" ]\nskia_use_vulkan = true"
+  "platform": "win64",
+  "source_revision": "e5e4933ea025f5e1b8a07d038e38869e205deb06",
+  "args": "is_official_build = true\nis_debug = false\ntarget_os = \"win\"\ntarget_cpu = \"x64\"\nis_sk4d_build = true\nis_sk4d_component_build = true\nwin_mingw = \"D:/projects/externals/skia/toolchains/llvm-mingw-20240619-ucrt-x86_64\"\nskia_use_partition_alloc = false\nskia_enable_tools = false\nskia_use_libavif = false\nskia_use_dng_sdk = false\nskia_use_freetype = false\nskia_use_system_expat = false\nskia_use_system_harfbuzz = false\nskia_use_system_icu = false\nskia_use_system_libjpeg_turbo = false\nskia_use_system_libpng = false\nskia_use_system_libwebp = false\nskia_use_system_zlib = false\nextra_cflags = [ \"-fasynchronous-unwind-tables\", \"-fno-addrsig\", \"-femulated-tls\" ]\nextra_cflags_cc = [ \"-fno-exceptions\" ]\nextra_ldflags = [ \"-static\" ]\nskia_use_vulkan = true",
+  "native_version": "151.0.1",
+  "sha256": "FBDB47561D3028FDCCA57C6C17CA5EE436073E407CD540CF913683137805E6F7"
 }

@@ -7,6 +7,7 @@ import argparse
 from bisect import bisect_right
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -222,26 +223,28 @@ def split_object(obj, directory, bits):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--skia-root', type=Path, default=Path('D:/projects/externals/skia'))
+    p.add_argument('--skia-root', type=Path, default=Path(__file__).resolve().parent.parent/'skia')
     p.add_argument('--toolchain', type=Path)
-    p.add_argument('--ld', type=Path, default=Path('C:/programdata/strawberry/c/bin/ld.exe'))
+    p.add_argument('--ld', type=Path, default=Path(shutil.which('ld') or 'ld'))
     p.add_argument('--platform', choices=['win32', 'win64'], default='win64')
     p.add_argument('--output', type=Path)
+    p.add_argument('--archive', type=Path)
+    p.add_argument('--work', type=Path)
     a = p.parse_args()
     root = Path(__file__).resolve().parent.parent
     version_header=(a.skia_root/'sk4d/include/sk4d_version.h').read_text()
     version=re.search(r'#define SK4D_VERSION "([^"]+)"',version_header).group(1)
     if not version.startswith('151.'):
         raise ValueError('The pinned Pascal API requires sk4d/m151')
-    tc = a.toolchain or a.skia_root/'toolchains/llvm-mingw-20240619-ucrt-x86_64'
+    tc = a.toolchain or Path(os.environ.get('LLVM_MINGW_ROOT', str(root/'runtime/toolchains/llvm-mingw-20240619-ucrt-x86_64')))
     out = a.output or root/'runtime/windows-static'
-    work = root/'.build/windows-static-m151'/a.platform
+    work = a.work or root/'runtime/build'/f'static-prelink-{a.platform}'
     work.mkdir(parents=True, exist_ok=True)
     bits = 64 if a.platform == 'win64' else 32
     arch = 'x86_64' if bits == 64 else 'i686'
     target = arch + '-w64-mingw32'
     prefix = '' if bits == 64 else '_'
-    archive = a.skia_root/f'out/static-{a.platform}-pascal/sk4d.a'
+    archive = a.archive or root/f'runtime/build/static-{a.platform}/sk4d.a'
     script = work/'combine.ld'
     script.write_text('''SECTIONS {
  .text : { *(.text*) }
@@ -399,6 +402,7 @@ end;
     (out/'Source').mkdir(exist_ok=True)
     (out/'Source/System.Skia.API.pas').write_text(api,encoding='utf-8-sig')
     (out/f'manifest-{a.platform}.json').write_text(json.dumps({'platform':a.platform,'native_version':version,
+        'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=a.skia_root,text=True).strip(),
         'pascal_api':'7.3.0','api_imports':len(required),'objects':len(pieces),
         'imports':list(names),'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
         'object_sha256':hashlib.sha256(final.read_bytes()).hexdigest(),

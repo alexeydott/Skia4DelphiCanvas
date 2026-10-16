@@ -1,8 +1,8 @@
 {
-  "platform": "win32",
   "native_version": "151.0.1",
-  "sha256": "AE04CC269029409CB79B519954DABD19C8CB660E8E6D0F9218DE7E6C61555C92",
-  "source_revision": "05fae0ee01e9e21a99355f89f8b5dacad2611a2c",
-  "pascal_api": "7.3.0",
-  "args": "is_official_build = true\nis_debug = false\ntarget_os = \"win\"\ntarget_cpu = \"x86\"\nis_sk4d_build = true\nis_sk4d_component_build = true\nwin_mingw = \"D:/projects/externals/skia/toolchains/llvm-mingw-20240619-ucrt-x86_64\"\nskia_use_partition_alloc = false\nskia_enable_tools = false\nskia_use_libavif = false\nskia_use_libjxl = false\nskia_use_dng_sdk = false\nskia_use_freetype = false\nskia_use_system_expat = false\nskia_use_system_harfbuzz = false\nskia_use_system_icu = false\nskia_use_system_libjpeg_turbo = false\nskia_use_system_libpng = false\nskia_use_system_libwebp = false\nskia_use_system_zlib = false\nextra_cflags = [ \"-fasynchronous-unwind-tables\", \"-fno-addrsig\", \"-femulated-tls\" ]\nextra_cflags_cc = [ \"-fno-exceptions\" ]\nextra_ldflags = [ \"-static\" ]\nskia_use_vulkan = true"
+  "source_revision": "e5e4933ea025f5e1b8a07d038e38869e205deb06",
+  "platform": "win32",
+  "sha256": "B6EF62E3C0D30ACA5AF4B6D1A54C0FA6ACF92C092395768C8CD00DFE5B17C5FA",
+  "args": "is_official_build = true\nis_debug = false\ntarget_os = \"win\"\ntarget_cpu = \"x86\"\nis_sk4d_build = true\nis_sk4d_component_build = true\nwin_mingw = \"D:/projects/externals/skia/toolchains/llvm-mingw-20240619-ucrt-x86_64\"\nskia_use_partition_alloc = false\nskia_enable_tools = false\nskia_use_libavif = false\nskia_use_dng_sdk = false\nskia_use_freetype = false\nskia_use_system_expat = false\nskia_use_system_harfbuzz = false\nskia_use_system_icu = false\nskia_use_system_libjpeg_turbo = false\nskia_use_system_libpng = false\nskia_use_system_libwebp = false\nskia_use_system_zlib = false\nextra_cflags = [ \"-fasynchronous-unwind-tables\", \"-fno-addrsig\", \"-femulated-tls\" ]\nextra_cflags_cc = [ \"-fno-exceptions\" ]\nextra_ldflags = [ \"-static\" ]\nskia_use_vulkan = true",
+  "pascal_api": "7.3.0"
 }

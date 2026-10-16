@@ -1,27 +1,43 @@
 param(
-    [string]$SkiaRoot = 'D:\projects\externals\skia',
-    [string]$Toolchain = 'D:\projects\externals\skia\toolchains\llvm-mingw-20240619-ucrt-x86_64',
-    [string]$Ninja = 'D:\tools\Meson\ninja.exe',
+    [string]$SkiaRoot = '',
+    [string]$Toolchain = '',
+    [string]$Ninja = 'ninja',
     [ValidateSet('win32','win64')][string]$Platform = 'win64',
     [ValidateSet('static','dll')][string]$Linkage = 'static',
     [string]$Output = '',
     [string]$RuntimeRoot = '',
-    [int]$Jobs = 16
+    [int]$Jobs = 16,
+    [switch]$SyncDependencies
 )
 $ErrorActionPreference = 'Stop'
+$root = Split-Path $PSScriptRoot -Parent
+if (!$SkiaRoot) { $SkiaRoot = Join-Path $root 'skia' }
+if (!$Toolchain) { $Toolchain = if ($env:LLVM_MINGW_ROOT) { $env:LLVM_MINGW_ROOT } else { Join-Path $root 'runtime/toolchains/llvm-mingw-20240619-ucrt-x86_64' } }
 if (!$RuntimeRoot) { $RuntimeRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'runtime' }
-if (!$Output) { $Output = "out\$Linkage-$Platform-pascal" }
+if (!$Output) { $Output = Join-Path $RuntimeRoot "build/$Linkage-$Platform" }
+$Output = [IO.Path]::GetFullPath($Output)
 $cpu = if ($Platform -eq 'win32') { 'x86' } else { 'x64' }
 $component = if ($Linkage -eq 'dll') { 'true' } else { 'false' }
 $SkiaRoot = (Resolve-Path -LiteralPath $SkiaRoot).Path
+if ($SyncDependencies) {
+    $previousSkip = $env:GIT_SYNC_DEPS_SKIP_EMSDK
+    try {
+        $env:GIT_SYNC_DEPS_SKIP_EMSDK = '1'
+        & python (Join-Path $SkiaRoot 'tools/git-sync-deps')
+        if ($LASTEXITCODE -ne 0) { throw 'Skia dependency synchronization failed' }
+    } finally { $env:GIT_SYNC_DEPS_SKIP_EMSDK = $previousSkip }
+}
 $versionHeader = Get-Content (Join-Path $SkiaRoot 'sk4d\include\sk4d_version.h') -Raw
 if ($versionHeader -notmatch '#define SK4D_VERSION "(151\.[^"]+)"') { throw 'The pinned Pascal API requires the sk4d/m151 checkout' }
 $nativeVersion = $Matches[1]
 $Toolchain = (Resolve-Path -LiteralPath $Toolchain).Path.Replace('\', '/')
 $gn = Join-Path $SkiaRoot 'bin\gn.exe'
-if (!(Test-Path -LiteralPath $gn)) { throw 'Run python bin/fetch-gn in the Skia checkout first' }
-if (!(Test-Path -LiteralPath $Ninja)) { throw "Ninja not found: $Ninja" }
-$build = Join-Path $SkiaRoot $Output
+if (!(Test-Path -LiteralPath $gn)) {
+    & python (Join-Path $SkiaRoot 'bin/fetch-gn')
+    if ($LASTEXITCODE -ne 0) { throw 'Skia GN download failed' }
+}
+if (!(Get-Command $Ninja -ErrorAction SilentlyContinue)) { throw "Ninja not found: $Ninja" }
+$build = $Output
 New-Item -ItemType Directory -Path $build -Force | Out-Null
 $arguments = @"
 is_official_build = true
@@ -34,7 +50,6 @@ win_mingw = "$Toolchain"
 skia_use_partition_alloc = false
 skia_enable_tools = false
 skia_use_libavif = false
-skia_use_libjxl = false
 skia_use_dng_sdk = false
 skia_use_freetype = false
 skia_use_system_expat = false
@@ -54,6 +69,8 @@ Push-Location $SkiaRoot
 try {
     & $gn gen $Output
     if ($LASTEXITCODE -ne 0) { throw 'Skia GN generation failed' }
+    & python (Join-Path $PSScriptRoot 'prepare_native_skia_compat.py') --skia-root $SkiaRoot --build-dir $build
+    if ($LASTEXITCODE -ne 0) { throw 'Native compiler compatibility staging failed' }
     & $Ninja -C $Output -j $Jobs sk4d
     if ($LASTEXITCODE -ne 0) { throw 'Skia native build failed' }
     $binary = if ($Linkage -eq 'dll') { 'sk4d.dll' } else { 'sk4d.a' }
@@ -66,5 +83,10 @@ try {
         $info = @{native_version=$nativeVersion; pascal_api='7.3.0'; platform=$Platform;
                   source_revision=(& git rev-parse HEAD); sha256=(Get-FileHash $installed).Hash; args=$arguments}
         $info | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $destination 'build-info.json') -Encoding utf8
+        & python (Join-Path $PSScriptRoot 'verify_native_skia_api.py') $installed
+        if ($LASTEXITCODE -ne 0) { throw 'Skia DLL API verification failed' }
+    } else {
+        & python (Join-Path $PSScriptRoot 'prepare_windows_static_m151.py') --skia-root $SkiaRoot --toolchain $Toolchain --platform $Platform --archive (Join-Path $build $binary) --output (Join-Path $RuntimeRoot 'windows-static') --work (Join-Path $RuntimeRoot "build/static-prelink-$Platform")
+        if ($LASTEXITCODE -ne 0) { throw 'Static Skia packaging failed' }
     }
 } finally { Pop-Location }

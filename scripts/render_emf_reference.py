@@ -9,9 +9,34 @@ import ctypes as C
 import hashlib
 import io
 import json
+import os
+import tempfile
+import time
 import struct
 from pathlib import Path
 from PIL import Image
+
+
+def write_reference(path, data):
+    """Preserve identical references; atomically publish changed files."""
+    if path.exists() and path.read_bytes() == data:
+        return
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name+'.',
+                                     suffix='.tmp', delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(data)
+    try:
+        for attempt in range(51):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                # Windows test readers can briefly deny replacement.
+                if attempt == 50:
+                    raise
+                time.sleep(0.1)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class Rect(C.Structure):
@@ -235,7 +260,9 @@ def render(g, source, width, height, output):
             raise RuntimeError(f"{source.name}: incomplete reference playback: {failures}")
         g.GdiFlush()
         image = Image.frombytes("RGB", (width, height), C.string_at(storage, width * height * 4), "raw", "BGRX")
-        image.save(output)
+        encoded = io.BytesIO()
+        image.save(encoded, format="BMP")
+        write_reference(output, encoded.getvalue())
         return recoveries
     finally:
         g.DeleteEnhMetaFile(metafile)
@@ -268,7 +295,7 @@ def main():
         print(f"{source.name}: {len(entry['scales']['1'])} compatibility records", flush=True)
     if not manifest:
         raise ValueError("No EMF fixtures found")
-    (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    write_reference(args.output / "manifest.json", json.dumps(manifest, indent=2).encode("utf-8"))
     print(f"{len(manifest)} immutable fixtures / {len(manifest) * 2} complete reference images")
 
 

@@ -4389,7 +4389,18 @@ end;
 
 {$ENDIF}
 
-{ A canvas exposes RGB pixels; bitmap overloads additionally retain alpha/color keys. }
+{ Inspect TObject first: TCanvas and TSkiaCanvas are currently siblings.
+  Borrow the existing Skia source; never capture it through HDC/RGB pixels. }
+function BltSkiaCanvasSource(Canvas: TCanvas): TSkiaCanvas;
+begin
+  Result := nil;
+  if TObject(Canvas) is TSkiaCanvas then
+    Result := TSkiaCanvas(TObject(Canvas));
+end;
+
+{ Ordinary native canvases expose RGB pixels. Skia sources are dispatched by
+  the TCanvas overloads before entering this capture helper. }
+
 function BltCanvasSource(Canvas: TCanvas; X, Y, Width, Height: Integer): TSkiaBitmapCanvas;
 {$IFNDEF MSWINDOWS}
 var
@@ -4432,9 +4443,16 @@ end;
 
 procedure TSkiaCanvas.CopyRect(const Dest: TRect; SrcCanvas: TCanvas; const SrcRect: TRect);
 var
+  SkiaSource: TSkiaCanvas;
   Source: TSkiaBitmapCanvas;
   Bounds: TRect;
 begin
+  SkiaSource := BltSkiaCanvasSource(SrcCanvas);
+  if SkiaSource <> nil then
+  begin
+    CopyRect(Dest, SkiaSource, SrcRect);
+    Exit;
+  end;
   if (SrcCanvas = nil) or (Dest.Width = 0) or (Dest.Height = 0) or (SrcRect.Width = 0) or (SrcRect.Height = 0) then
     Exit;
   Source := BltCanvasSource(SrcCanvas, SrcRect.Left, SrcRect.Top, SrcRect.Width, SrcRect.Height);
@@ -4460,9 +4478,16 @@ end;
 
 procedure TSkiaCanvas.BitBlt(X, Y, Width, Height: Integer; Src: TCanvas; XSrc, YSrc: Integer);
 var
+  SkiaSource: TSkiaCanvas;
   Source: TSkiaBitmapCanvas;
   XS, YS: Integer;
 begin
+  SkiaSource := BltSkiaCanvasSource(Src);
+  if SkiaSource <> nil then
+  begin
+    BitBlt(X, Y, Width, Height, SkiaSource, XSrc, YSrc);
+    Exit;
+  end;
   if (Width <= 0) or (Height <= 0) then
     Exit;
   Source := BltCanvasSource(Src, XSrc, YSrc, Width, Height);
@@ -4483,9 +4508,16 @@ end;
 
 procedure TSkiaCanvas.StretchBlt(X, Y, Width, Height: Integer; Src: TCanvas; XSrc, YSrc, SrcWidth, SrcHeight: Integer);
 var
+  SkiaSource: TSkiaCanvas;
   Source: TSkiaBitmapCanvas;
   XS, YS: Integer;
 begin
+  SkiaSource := BltSkiaCanvasSource(Src);
+  if SkiaSource <> nil then
+  begin
+    StretchBlt(X, Y, Width, Height, SkiaSource, XSrc, YSrc, SrcWidth, SrcHeight);
+    Exit;
+  end;
   if (Width = 0) or (Height = 0) then
     Exit;
   Source := BltCanvasSource(Src, XSrc, YSrc, SrcWidth, SrcHeight);
@@ -4506,9 +4538,16 @@ end;
 
 procedure TSkiaCanvas.MaskBlt(X, Y, Width, Height: Integer; Src: TCanvas; XSrc, YSrc: Integer; Mask: TBitmap; XMask, YMask: Integer);
 var
+  SkiaSource: TSkiaCanvas;
   Source: TSkiaBitmapCanvas;
   XS, YS: Integer;
 begin
+  SkiaSource := BltSkiaCanvasSource(Src);
+  if SkiaSource <> nil then
+  begin
+    MaskBlt(X, Y, Width, Height, SkiaSource, XSrc, YSrc, Mask, XMask, YMask);
+    Exit;
+  end;
   if (Width <= 0) or (Height <= 0) then
     Exit;
   if Mask = nil then
@@ -4531,9 +4570,16 @@ end;
 
 procedure TSkiaCanvas.PlgBlt(const Points: array of TPoint; Src: TCanvas; XSrc, YSrc, Width, Height: Integer);
 var
+  SkiaSource: TSkiaCanvas;
   Source: TSkiaBitmapCanvas;
   XS, YS: Integer;
 begin
+  SkiaSource := BltSkiaCanvasSource(Src);
+  if SkiaSource <> nil then
+  begin
+    PlgBlt(Points, SkiaSource, XSrc, YSrc, Width, Height);
+    Exit;
+  end;
   if Length(Points) < 3 then
     Exit;
   Source := BltCanvasSource(Src, XSrc, YSrc, Width, Height);

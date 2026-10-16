@@ -2,16 +2,19 @@
 # Build Skia m151 for the pinned Skia4Delphi 7.3 Pascal bindings.
 set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-: "${SKIA_SOURCE_DIR:?Set SKIA_SOURCE_DIR to the sk4d/m151 source tree}"
+SKIA_SOURCE_DIR=${SKIA_SOURCE_DIR:-"$root/skia"}
 source_dir=$(realpath "$SKIA_SOURCE_DIR")
 version_header="$source_dir/sk4d/include/sk4d_version.h"
 grep -Eq 'SK4D_VERSION[[:space:]]+"151\.' "$version_header" || {
   echo 'This build requires sk4d/m151, matching the pinned Pascal API.' >&2
   exit 1
 }
-build_dir=${SKIA_BUILD_DIR:-"$source_dir/out/linux-vector"}
+build_dir=${SKIA_BUILD_DIR:-"$root/runtime/build/linux64"}
 runtime_dir=${SKIA_RUNTIME_DIR:-"$root/runtime/linux64"}
 cd "$source_dir"
+if [[ ${SKIA_SYNC_DEPS:-0} == 1 ]]; then
+  GIT_SYNC_DEPS_SKIP_EMSDK=1 python3 tools/git-sync-deps
+fi
 [[ -x bin/gn ]] || python3 bin/fetch-gn
 bin/gn gen "$build_dir" --args='
 is_official_build = true
@@ -42,6 +45,7 @@ install -m 644 "$build_dir/args.gn" "$runtime_dir/args.gn"
 {
   grep SK4D_VERSION "$version_header" | tail -1
   echo 'Skia4Delphi 7.3.0 Pascal API; native SVG gradients'
+  git -C "$source_dir" rev-parse HEAD
   clang++ --version | head -n 1
   (cd "$runtime_dir" && sha256sum libsk4d.so)
 } > "$runtime_dir/build-info.txt"
