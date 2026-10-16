@@ -1,0 +1,4 @@
+# Keep scripts executable by Python/Bash after a Windows checkout.
+*.sh text eol=lf
+*.py text eol=lf
+.gitmodules text eol=lf
