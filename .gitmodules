@@ -1,0 +1,4 @@
+[submodule "skia"]
+	path = skia
+	url = https://github.com/skia4delphi/skia.git
+	branch = sk4d/m151

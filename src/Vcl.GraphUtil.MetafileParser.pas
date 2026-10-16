@@ -6,7 +6,7 @@ unit Vcl.GraphUtil.MetafileParser;
 interface
 
 uses
-  {$IFDEF FPC}Windows{$ELSE}Winapi.Windows{$ENDIF}, Classes, SysUtils, Vcl.Graphics, Math;
+{$IFDEF FPC}Windows{$ELSE}Winapi.Windows{$ENDIF}, Classes, SysUtils, Vcl.Graphics, Math;
 
 resourcestring
   SMetafileInvalidRecord = 'Invalid EMF record %d: expected at least %d bytes, found %d';
@@ -20,8 +20,7 @@ type
   TMetafilePrimitiveKind = (mpkNone, mpkPolyline, mpkPolygon, mpkText, mpkImage);
   TNotifyEventCallback = reference to procedure(Sender: TObject);
   /// <summary>Receives the original enumeration context before a record is parsed.</summary>
-  TMetafileRecordEvent = procedure(Sender:TObject;ADC:HDC;ATable:Pointer;
-    ARecord:PEnhMetaRecord;AObjects:Integer) of object;
+  TMetafileRecordEvent = procedure(Sender: TObject; ADC: HDC; ATable: Pointer; ARecord: PEnhMetaRecord; AObjects: Integer) of object;
 
   TMetafilePoint = record
     X: Double;
@@ -82,8 +81,8 @@ type
     Width: Double;
     Hairline: Boolean;
     Style: Cardinal;
-    BrushStyle:Cardinal;
-    Hatch:Cardinal;
+    BrushStyle: Cardinal;
+    Hatch: Cardinal;
     EndCap: Cardinal;
     Join: Cardinal;
     MiterLimit: Double;
@@ -191,7 +190,7 @@ type
 
   TMetafileParser = class
   private
-    FOnRecord,FOnRecordComplete: TMetafileRecordEvent;
+    FOnRecord, FOnRecordComplete: TMetafileRecordEvent;
     FCurrent: TMetafilePrimitive;
     FPrimitives: TList;
     FStorePrimitives: Boolean;
@@ -219,7 +218,7 @@ type
     procedure SelectObjectHandle(AHandle: Cardinal);
     procedure DeleteObjectHandle(AHandle: Cardinal);
     function LogicalToOutput(const P: TPoint): TMetafilePoint; overload;
-    {$IFDEF FPC}function LogicalToOutput(const P: POINTL): TMetafilePoint; overload;{$ENDIF}
+{$IFDEF FPC} function LogicalToOutput(const P: POINTL): TMetafilePoint; overload; {$ENDIF}
     function LogicalToOutput(X, Y: Double): TMetafilePoint; overload;
     function CurrentStroke: TMetafileStrokeStyle;
     function CurrentFill: TMetafileFillStyle;
@@ -299,10 +298,10 @@ type
     constructor Create;
     destructor Destroy; override;
     /// <summary>Parses an in-memory enhanced metafile without taking ownership.</summary>
-    function LoadFromMetafile(AMetafile: TMetafile; APlaybackDC:HDC=0; APlaybackBounds:PRect=nil): Boolean;
+    function LoadFromMetafile(AMetafile: TMetafile; APlaybackDC: HDC = 0; APlaybackBounds: PRect = nil): Boolean;
     function LoadFromFile(const AFileName: string): Boolean;
     /// Synchronizes the next primitive's logical origin after native current-point updates.
-    procedure SynchronizeCurrentPosition(const APosition:TPoint);
+    procedure SynchronizeCurrentPosition(const APosition: TPoint);
     function PrimitiveCount: Integer;
     function PrimitiveByIndex(AIndex: Integer): TMetafilePrimitive;
     function CurrentTextToFlatPolygons(out APoints: TMetafilePointArray; out APointCounts: TMetafileIntegerArray): Boolean;
@@ -310,8 +309,8 @@ type
     class function CubicBezierToFlatPolyline(const P0, P1, P2, P3: TMetafilePoint; ATolerance: Double): TMetafilePointArray;
     class function QuadraticBezierToFlatPolyline(const P0, P1, P2: TMetafilePoint; ATolerance: Double): TMetafilePointArray;
     class function BezierPointsToFlatPolyline(const ABezierPoints: TMetafilePointArray; ATolerance: Double): TMetafilePointArray;
-    property OnRecord:TMetafileRecordEvent read FOnRecord write FOnRecord;
-    property OnRecordComplete:TMetafileRecordEvent read FOnRecordComplete write FOnRecordComplete;
+    property OnRecord: TMetafileRecordEvent read FOnRecord write FOnRecord;
+    property OnRecordComplete: TMetafileRecordEvent read FOnRecordComplete write FOnRecordComplete;
     property Current: TMetafilePrimitive read FCurrent;
     property StorePrimitives: Boolean read FStorePrimitives write FStorePrimitives;
     property OnObjectPlay: TNotifyEvent read FOnObjectPlay write FOnObjectPlay;
@@ -324,27 +323,27 @@ type
 
 type
   /// <summary>Decodes PNG/JPEG or a normalized in-memory BMP into a top-down 32-bit BI_RGB DIB.</summary>
-  TMetafileImageDecoder = function(const Encoded:TBytes;out Info,Bits:TBytes):Boolean of object;
-  TMetafileRecordRecovery = (mrrNone,mrrEmptyPath,mrrOutsideSource,mrrDibHeader,
-    mrrPalette,mrrPatternPen,mrrCompressedDib);
+  TMetafileImageDecoder = function(const Encoded: TBytes; out Info, Bits: TBytes): Boolean of object;
+  TMetafileRecordRecovery = (mrrNone, mrrEmptyPath, mrrOutsideSource, mrrDibHeader, mrrPalette, mrrPatternPen, mrrCompressedDib);
+
   /// <summary>Replays records with bounded in-memory recovery for noncanonical DIBs and pens.</summary>
   /// <remarks>Use one instance per enumeration and process every record in order. Source buffers are never modified.</remarks>
   TMetafileRecordPlayer = class
   private
-    FDecoder:TMetafileImageDecoder;
-    FRecovery:TMetafileRecordRecovery;
-    FError:Cardinal;
-    FPathOpen:Boolean;
+    FDecoder: TMetafileImageDecoder;
+    FRecovery: TMetafileRecordRecovery;
+    FError: Cardinal;
+    FPathOpen: Boolean;
   public
     /// <summary>Replays one enumeration record, reporting failures instead of silently dropping content.</summary>
-    function Play(DC:HDC;Table:Pointer;RecordData:PEnhMetaRecord;Objects:Integer):Boolean;
-    property ImageDecoder:TMetafileImageDecoder read FDecoder write FDecoder;
-    property Recovery:TMetafileRecordRecovery read FRecovery;
-    property ErrorCode:Cardinal read FError;
+    function Play(DC: HDC; Table: Pointer; RecordData: PEnhMetaRecord; Objects: Integer): Boolean;
+    property ImageDecoder: TMetafileImageDecoder read FDecoder write FDecoder;
+    property Recovery: TMetafileRecordRecovery read FRecovery;
+    property ErrorCode: Cardinal read FError;
   end;
 
-/// <summary>Validates and normalizes self-describing DIB metadata without altering its pixels.</summary>
-function NormalizeMetafileDIB(var Info:TBytes;const Bits:TBytes;Usage:Cardinal):TMetafileRecordRecovery;
+  /// <summary>Validates and normalizes self-describing DIB metadata without altering its pixels.</summary>
+function NormalizeMetafileDIB(var Info: TBytes; const Bits: TBytes; Usage: Cardinal): TMetafileRecordRecovery;
 
 implementation
 
@@ -484,9 +483,10 @@ type
 
   { EMF stores 32-bit brush hatch data even in a Win64 process. }
   TEmfExtLogPen32 = packed record
-    elpPenStyle,elpWidth,elpBrushStyle,elpColor,elpHatch,elpNumEntries:DWORD;
-    elpStyleEntry:array[0..0] of DWORD;
+    elpPenStyle, elpWidth, elpBrushStyle, elpColor, elpHatch, elpNumEntries: DWORD;
+    elpStyleEntry: array [0 .. 0] of DWORD;
   end;
+
   PEMRExtCreatePenLocal = ^TEMRExtCreatePenLocal;
 
   TEMRExtCreatePenLocal = packed record
@@ -767,59 +767,101 @@ type
       ACombineMode: Cardinal; out AResultPoints: TMetafilePointArray; out AResultCounts: TMetafileIntegerArray): Boolean;
   end;
 
-function MinimumMetafileRecordSize(Kind:Cardinal):Cardinal;
+function MinimumMetafileRecordSize(Kind: Cardinal): Cardinal;
 begin
-  Result:=8;
+  Result := 8;
   case Kind of
-    1:Result:=88;
-    2..6,56,85..89,92:Result:=28;
-    7,8,90,91:Result:=32;
-    9..13,26,27:Result:=16;
-    14:Result:=20;
-    15:Result:=20;
-    16..25,37,40,57,58,67,98,115:Result:=12;
-    29..32:Result:=24;
-    34:Result:=12;
-    35:Result:=32;
-    36:Result:=36;
-    38:Result:=28;
-    39,42,43:Result:=24;
-    41:Result:=28;
-    44:Result:=32;
-    45..47,55:Result:=40;
-    54:Result:=16;
-    62..64:Result:=24;
-    75:Result:=16;
-    76:Result:=100;
-    77,114,116:Result:=108;
-    78:Result:=128;
-    79:Result:=140;
-    80:Result:=76;
-    81:Result:=80;
-    82:Result:=104;
-    83,84:Result:=76;
-    93,94:Result:=32;
-    95:Result:=52;
-    96,97:Result:=40;
-    108:Result:=36;
-    118:Result:=36;
-    120:Result:=16;
+    1:
+      Result := 88;
+    2 .. 6, 56, 85 .. 89, 92:
+      Result := 28;
+    7, 8, 90, 91:
+      Result := 32;
+    9 .. 13, 26, 27:
+      Result := 16;
+    14:
+      Result := 20;
+    15:
+      Result := 20;
+    16 .. 25, 37, 40, 57, 58, 67, 98, 115:
+      Result := 12;
+    29 .. 32:
+      Result := 24;
+    34:
+      Result := 12;
+    35:
+      Result := 32;
+    36:
+      Result := 36;
+    38:
+      Result := 28;
+    39, 42, 43:
+      Result := 24;
+    41:
+      Result := 28;
+    44:
+      Result := 32;
+    45 .. 47, 55:
+      Result := 40;
+    54:
+      Result := 16;
+    62 .. 64:
+      Result := 24;
+    75:
+      Result := 16;
+    76:
+      Result := 100;
+    77, 114, 116:
+      Result := 108;
+    78:
+      Result := 128;
+    79:
+      Result := 140;
+    80:
+      Result := 76;
+    81:
+      Result := 80;
+    82:
+      Result := 104;
+    83, 84:
+      Result := 76;
+    93, 94:
+      Result := 32;
+    95:
+      Result := 52;
+    96, 97:
+      Result := 40;
+    108:
+      Result := 36;
+    118:
+      Result := 36;
+    120:
+      Result := 16;
   end;
 end;
 
 function EnumMetafilePrimitiveProc(ADC: HDC; ATable: PHandleTable; ARecord: PEnhMetaRecord; AObjects: Integer; AData: Pointer): Integer; stdcall;
-var Minimum:Cardinal;
+var
+  Minimum: Cardinal;
 begin
   try
-    if ARecord=nil then raise EReadError.Create(SMetafileEmpty);
-    Minimum:=MinimumMetafileRecordSize(ARecord.iType);
-    if ARecord.nSize<Minimum then raise EReadError.CreateFmt(SMetafileInvalidRecord,[ARecord.iType,Minimum,ARecord.nSize]);
+    if ARecord = nil then
+      raise EReadError.Create(SMetafileEmpty);
+    Minimum := MinimumMetafileRecordSize(ARecord.iType);
+    if ARecord.nSize < Minimum then
+      raise EReadError.CreateFmt(SMetafileInvalidRecord, [ARecord.iType, Minimum, ARecord.nSize]);
     if Assigned(TMetafileParser(AData).FOnRecord) then
-      TMetafileParser(AData).FOnRecord(AData,ADC,ATable,ARecord,AObjects);
-    Result:=TMetafileParser(AData).EnumRecord(ADC,ARecord);
-    if (Result<>0) and Assigned(TMetafileParser(AData).FOnRecordComplete) then
-      TMetafileParser(AData).FOnRecordComplete(AData,ADC,ATable,ARecord,AObjects);
-  except on E:Exception do begin TMetafileParser(AData).FLastError:=E.Message;Result:=0;end;end;
+      TMetafileParser(AData).FOnRecord(AData, ADC, ATable, ARecord, AObjects);
+    Result := TMetafileParser(AData).EnumRecord(ADC, ARecord);
+    if (Result <> 0) and Assigned(TMetafileParser(AData).FOnRecordComplete) then
+      TMetafileParser(AData).FOnRecordComplete(AData, ADC, ATable, ARecord, AObjects);
+  except
+    on E: Exception do
+    begin
+      TMetafileParser(AData).FLastError := E.Message;
+      Result := 0;
+    end;
+  end;
 end;
 
 function PtrOffset(APtr: Pointer; AOffset: NativeUInt): Pointer;
@@ -1160,9 +1202,7 @@ begin
     mrokPlgBlt:
       Result := 'PLGBLT';
     mrokRop4:
-      Result := Format('ROP4 fg=%s bg=%s',
-        [MetafileRopByteName(MetafileRop4ForegroundByte(AOperation)),
-         MetafileRopByteName(MetafileRop4BackgroundByte(AOperation))]);
+      Result := Format('ROP4 fg=%s bg=%s', [MetafileRopByteName(MetafileRop4ForegroundByte(AOperation)), MetafileRopByteName(MetafileRop4BackgroundByte(AOperation))]);
     mrokRop3:
       Result := MetafileRopByteName(MetafileRopToByte(AOperation));
   else
@@ -1319,7 +1359,8 @@ begin
   AEdges[L].Source := ASource;
 end;
 
-class procedure TMetafileClipBooleanEngine.AddContours(const APoints: TMetafilePointArray; const ACounts: TMetafileIntegerArray; ASource: TClipBooleanSource; var AEdges: TClipBooleanEdgeArray; var AYs: TClipBooleanYArray);
+class procedure TMetafileClipBooleanEngine.AddContours(const APoints: TMetafilePointArray; const ACounts: TMetafileIntegerArray; ASource: TClipBooleanSource; var AEdges: TClipBooleanEdgeArray;
+  var AYs: TClipBooleanYArray);
 var
   I, J, StartIndex, Count: Integer;
 begin
@@ -1357,8 +1398,7 @@ begin
   Qy := B.P0.Y - A.P0.Y;
   T := (Qx * Sy - Qy * Sx) / Den;
   U := (Qx * Ry - Qy * Rx) / Den;
-  if (T > CLIP_BOOLEAN_EPSILON) and (T < 1 - CLIP_BOOLEAN_EPSILON) and
-     (U > CLIP_BOOLEAN_EPSILON) and (U < 1 - CLIP_BOOLEAN_EPSILON) then
+  if (T > CLIP_BOOLEAN_EPSILON) and (T < 1 - CLIP_BOOLEAN_EPSILON) and (U > CLIP_BOOLEAN_EPSILON) and (U < 1 - CLIP_BOOLEAN_EPSILON) then
   begin
     AY := A.P0.Y + T * Ry;
     Result := True;
@@ -1382,8 +1422,7 @@ var
 begin
   MinY := Min(AEdge.P0.Y, AEdge.P1.Y);
   MaxY := Max(AEdge.P0.Y, AEdge.P1.Y);
-  Result := (MaxY - MinY > CLIP_BOOLEAN_EPSILON) and
-    (AY > MinY + CLIP_BOOLEAN_EPSILON) and (AY < MaxY - CLIP_BOOLEAN_EPSILON);
+  Result := (MaxY - MinY > CLIP_BOOLEAN_EPSILON) and (AY > MinY + CLIP_BOOLEAN_EPSILON) and (AY < MaxY - CLIP_BOOLEAN_EPSILON);
 end;
 
 class function TMetafileClipBooleanEngine.EdgeXAtY(const AEdge: TClipBooleanEdge; AY: Double): Double;
@@ -1438,10 +1477,7 @@ begin
   One[3] := PointOnEdgeAtY(ALeft, AY1);
   One[4] := One[0];
 
-  Area := ((One[0].X * One[1].Y - One[1].X * One[0].Y) +
-           (One[1].X * One[2].Y - One[2].X * One[1].Y) +
-           (One[2].X * One[3].Y - One[3].X * One[2].Y) +
-           (One[3].X * One[0].Y - One[0].X * One[3].Y)) * 0.5;
+  Area := ((One[0].X * One[1].Y - One[1].X * One[0].Y) + (One[1].X * One[2].Y - One[2].X * One[1].Y) + (One[2].X * One[3].Y - One[3].X * One[2].Y) + (One[3].X * One[0].Y - One[0].X * One[3].Y)) * 0.5;
   if Abs(Area) <= CLIP_BOOLEAN_EPSILON then
     Exit;
 
@@ -1450,8 +1486,8 @@ begin
   Result := True;
 end;
 
-class function TMetafileClipBooleanEngine.Execute(const ASubjectPoints: TMetafilePointArray; const ASubjectCounts: TMetafileIntegerArray; const AClipPoints: TMetafilePointArray; const AClipCounts: TMetafileIntegerArray;
-  ACombineMode: Cardinal; out AResultPoints: TMetafilePointArray; out AResultCounts: TMetafileIntegerArray): Boolean;
+class function TMetafileClipBooleanEngine.Execute(const ASubjectPoints: TMetafilePointArray; const ASubjectCounts: TMetafileIntegerArray; const AClipPoints: TMetafilePointArray;
+  const AClipCounts: TMetafileIntegerArray; ACombineMode: Cardinal; out AResultPoints: TMetafilePointArray; out AResultCounts: TMetafileIntegerArray): Boolean;
 var
   Edges: TClipBooleanEdgeArray;
   Ys: TClipBooleanYArray;
@@ -1474,7 +1510,7 @@ begin
   Result := False;
   SetLength(AResultPoints, 0);
   SetLength(AResultCounts, 0);
-  if not ((ACombineMode = RGN_AND) or (ACombineMode = RGN_OR) or (ACombineMode = RGN_XOR) or (ACombineMode = RGN_DIFF)) then
+  if not((ACombineMode = RGN_AND) or (ACombineMode = RGN_OR) or (ACombineMode = RGN_XOR) or (ACombineMode = RGN_DIFF)) then
     Exit;
 
   AddContours(ASubjectPoints, ASubjectCounts, cbsSubject, Edges, Ys);
@@ -1542,12 +1578,11 @@ begin
   Result := True;
 end;
 
-
 { TMetafileStrokeStyle }
 
 function TMetafileStrokeStyle.PenStyle: TPenStyle;
 begin
-   if not Visible then
+  if not Visible then
     Exit(psClear);
 
   case Style and PS_STYLE_MASK of
@@ -1661,36 +1696,72 @@ begin
   inherited Destroy;
 end;
 
-procedure TMetafileParser.SynchronizeCurrentPosition(const APosition:TPoint);
+procedure TMetafileParser.SynchronizeCurrentPosition(const APosition: TPoint);
 begin
-  DCStateOf(Self).State.NextPos:=APosition;
+  DCStateOf(Self).State.NextPos := APosition;
 end;
 
-function TMetafileParser.LoadFromMetafile(AMetafile:TMetafile;APlaybackDC:HDC;APlaybackBounds:PRect):Boolean;
-var R:TRect;Playback:HENHMETAFILE;
+function TMetafileParser.LoadFromMetafile(AMetafile: TMetafile; APlaybackDC: HDC; APlaybackBounds: PRect): Boolean;
+var
+  R: TRect;
+  Playback: HENHMETAFILE;
 begin
-  Result:=False;FLastError:='';Reset;
-  if (AMetafile=nil) or AMetafile.Empty then begin FLastError:=SMetafileEmpty;Exit;end;
-  if APlaybackBounds<>nil then R:=APlaybackBounds^ else R:=Rect(0,0,AMetafile.Width,AMetafile.Height);
+  Result := False;
+  FLastError := '';
+  Reset;
+  if (AMetafile = nil) or AMetafile.Empty then
+  begin
+    FLastError := SMetafileEmpty;
+    Exit;
+  end;
+  if APlaybackBounds <> nil then
+    R := APlaybackBounds^
+  else
+    R := Rect(0, 0, AMetafile.Width, AMetafile.Height);
   { Normalize memory-loaded VCL handles before enumeration. Some GDI versions reject
     the original handle after its header, while an unmodified copy plays correctly. }
-  Playback:=CopyEnhMetaFile(AMetafile.Handle,nil);
-  if Playback=0 then begin FLastError:=Format(SMetafileEnumerationFailed,[0,GetLastError]);Exit;end;
-  try Result:=EnumEnhMetaFile(APlaybackDC,Playback,@EnumMetafilePrimitiveProc,Self,R);
-  finally DeleteEnhMetaFile(Playback);end;
-  if not Result and (FLastError='') then FLastError:=Format(SMetafileEnumerationFailed,[FRecordIndex,GetLastError]);
+  Playback := CopyEnhMetaFile(AMetafile.Handle, nil);
+  if Playback = 0 then
+  begin
+    FLastError := Format(SMetafileEnumerationFailed, [0, GetLastError]);
+    Exit;
+  end;
+  try
+    Result := EnumEnhMetaFile(APlaybackDC, Playback, @EnumMetafilePrimitiveProc, Self, R);
+  finally
+    DeleteEnhMetaFile(Playback);
+  end;
+  if not Result and (FLastError = '') then
+    FLastError := Format(SMetafileEnumerationFailed, [FRecordIndex, GetLastError]);
 end;
 
-function TMetafileParser.LoadFromFile(const AFileName:string):Boolean;
-var MF:TMetafile;
+function TMetafileParser.LoadFromFile(const AFileName: string): Boolean;
+var
+  MF: TMetafile;
 begin
-  Result:=False;FLastError:='';Reset;
-  if not FileExists(AFileName) then begin FLastError:=Format(SMetafileFileNotFound,[AFileName]);Exit;end;
-  MF:=TMetafile.Create;
+  Result := False;
+  FLastError := '';
+  Reset;
+  if not FileExists(AFileName) then
+  begin
+    FLastError := Format(SMetafileFileNotFound, [AFileName]);
+    Exit;
+  end;
+  MF := TMetafile.Create;
   try
-    try MF.LoadFromFile(AFileName);Result:=LoadFromMetafile(MF);
-    except on E:Exception do begin FLastError:=E.Message;Result:=False;end;end;
-  finally MF.Free;end;
+    try
+      MF.LoadFromFile(AFileName);
+      Result := LoadFromMetafile(MF);
+    except
+      on E: Exception do
+      begin
+        FLastError := E.Message;
+        Result := False;
+      end;
+    end;
+  finally
+    MF.Free;
+  end;
 end;
 
 function TMetafileParser.PrimitiveCount: Integer;
@@ -1813,8 +1884,10 @@ begin
   else
     FMaxObjectHandle := MAX_EMF_OBJECT_HANDLES;
   { The ink bounds do not describe the reference device's physical resolution. }
-  if FDeviceSizeMM.cx>0 then FDeviceDpiX:=FDeviceSizePx.cx*25.4/FDeviceSizeMM.cx;
-  if FDeviceSizeMM.cy>0 then FDeviceDpiY:=FDeviceSizePx.cy*25.4/FDeviceSizeMM.cy;
+  if FDeviceSizeMM.cx > 0 then
+    FDeviceDpiX := FDeviceSizePx.cx * 25.4 / FDeviceSizeMM.cx;
+  if FDeviceSizeMM.cy > 0 then
+    FDeviceDpiY := FDeviceSizePx.cy * 25.4 / FDeviceSizeMM.cy;
 end;
 
 procedure TMetafileDCState.InitDefaultState;
@@ -1852,7 +1925,7 @@ begin
   State.Stroke.Visible := True;
   State.Stroke.Color := clBlack;
   State.Stroke.Width := 1;
-  State.Stroke.Hairline:=True;
+  State.Stroke.Hairline := True;
   State.Stroke.Style := PS_SOLID;
   State.Stroke.EndCap := PS_ENDCAP_FLAT;
   State.Stroke.Join := PS_JOIN_MITER;
@@ -1917,8 +1990,11 @@ begin
 end;
 
 {$IFDEF FPC}
-function TMetafileParser.LogicalToOutput(const P:POINTL):TMetafilePoint;
-begin Result:=LogicalToOutput(P.X,P.Y);end;
+
+function TMetafileParser.LogicalToOutput(const P: POINTL): TMetafilePoint;
+begin
+  Result := LogicalToOutput(P.X, P.Y);
+end;
 {$ENDIF}
 
 function TMetafileParser.LogicalToOutput(const P: TPoint): TMetafilePoint;
@@ -1967,7 +2043,8 @@ begin
   else
     CountToPop := Length(FStateStack) - ARelative + 1;
 
-  if (ARelative=0) or (CountToPop<1) or (CountToPop>Length(FStateStack)) then Exit;
+  if (ARelative = 0) or (CountToPop < 1) or (CountToPop > Length(FStateStack)) then
+    Exit;
   while (CountToPop > 0) and (Length(FStateStack) > 0) do
   begin
     State := FStateStack[High(FStateStack)];
@@ -2078,11 +2155,16 @@ begin
   if (Stock and EMF_STOCK_OBJECT_FLAG) <> 0 then
     Stock := Stock and not EMF_STOCK_OBJECT_FLAG;
 
-  if Stock<=HOLLOW_BRUSH then begin
-    State.Fill.Brush.Kind:=mbdkNone;State.Fill.Brush.Usage:=0;
-    State.Fill.Brush.BitmapInfo:=nil;State.Fill.Brush.Bits:=nil;
-    State.Fill.Gradient.Kind:=mgkNone;State.Fill.Gradient.Mode:=0;
-    State.Fill.Gradient.Vertices:=nil;State.Fill.Gradient.Meshes:=nil;
+  if Stock <= HOLLOW_BRUSH then
+  begin
+    State.Fill.Brush.Kind := mbdkNone;
+    State.Fill.Brush.Usage := 0;
+    State.Fill.Brush.BitmapInfo := nil;
+    State.Fill.Brush.Bits := nil;
+    State.Fill.Gradient.Kind := mgkNone;
+    State.Fill.Gradient.Mode := 0;
+    State.Fill.Gradient.Vertices := nil;
+    State.Fill.Gradient.Meshes := nil;
   end;
   case Stock of
     WHITE_BRUSH:
@@ -2131,11 +2213,13 @@ begin
         State.Stroke.Visible := True;
         State.Stroke.Color := clWhite;
         State.Stroke.Width := 1;
-        State.Stroke.Hairline:=True;
-        State.Stroke.BrushStyle:=BS_SOLID;
-        State.Stroke.Hatch:=0;
-        State.Stroke.Brush.Kind:=mbdkNone;State.Stroke.Brush.Usage:=0;
-        State.Stroke.Brush.BitmapInfo:=nil;State.Stroke.Brush.Bits:=nil;
+        State.Stroke.Hairline := True;
+        State.Stroke.BrushStyle := BS_SOLID;
+        State.Stroke.Hatch := 0;
+        State.Stroke.Brush.Kind := mbdkNone;
+        State.Stroke.Brush.Usage := 0;
+        State.Stroke.Brush.BitmapInfo := nil;
+        State.Stroke.Brush.Bits := nil;
         State.Stroke.Style := PS_SOLID;
       end;
     BLACK_PEN:
@@ -2143,11 +2227,13 @@ begin
         State.Stroke.Visible := True;
         State.Stroke.Color := clBlack;
         State.Stroke.Width := 1;
-        State.Stroke.Hairline:=True;
-        State.Stroke.BrushStyle:=BS_SOLID;
-        State.Stroke.Hatch:=0;
-        State.Stroke.Brush.Kind:=mbdkNone;State.Stroke.Brush.Usage:=0;
-        State.Stroke.Brush.BitmapInfo:=nil;State.Stroke.Brush.Bits:=nil;
+        State.Stroke.Hairline := True;
+        State.Stroke.BrushStyle := BS_SOLID;
+        State.Stroke.Hatch := 0;
+        State.Stroke.Brush.Kind := mbdkNone;
+        State.Stroke.Brush.Usage := 0;
+        State.Stroke.Brush.BitmapInfo := nil;
+        State.Stroke.Brush.Bits := nil;
         State.Stroke.Style := PS_SOLID;
       end;
     NULL_PEN:
@@ -2210,7 +2296,7 @@ end;
 function TMetafileDCState.LogicalToOutput(X, Y: Double): TMetafilePoint;
 var
   Page: TMetafilePoint;
-  SX, SY: Double;
+  Sx, Sy: Double;
 begin
   Page.X := X * State.WorldTransform.eM11 + Y * State.WorldTransform.eM21 + State.WorldTransform.eDx;
   Page.Y := X * State.WorldTransform.eM12 + Y * State.WorldTransform.eM22 + State.WorldTransform.eDy;
@@ -2248,14 +2334,14 @@ begin
       end;
   else
     begin
-      SX := 1;
-      SY := 1;
+      Sx := 1;
+      Sy := 1;
       if State.WindowExt.cx <> 0 then
-        SX := State.ViewportExt.cx / State.WindowExt.cx;
+        Sx := State.ViewportExt.cx / State.WindowExt.cx;
       if State.WindowExt.cy <> 0 then
-        SY := State.ViewportExt.cy / State.WindowExt.cy;
-      Result.X := (Page.X - State.WindowOrg.X) * SX + State.ViewportOrg.X;
-      Result.Y := (Page.Y - State.WindowOrg.Y) * SY + State.ViewportOrg.Y;
+        Sy := State.ViewportExt.cy / State.WindowExt.cy;
+      Result.X := (Page.X - State.WindowOrg.X) * Sx + State.ViewportOrg.X;
+      Result.Y := (Page.Y - State.WindowOrg.Y) * Sy + State.ViewportOrg.Y;
     end;
   end;
 end;
@@ -2912,8 +2998,8 @@ begin
   end;
 end;
 
-procedure TMetafileParser.EmitPrimitive(AKind: TMetafilePrimitiveKind; const APoints: TMetafilePointArray; const APointCounts: TMetafileIntegerArray; const AText: UnicodeString;
-  ARecordType: Cardinal; const ARecordName: string; AUseStroke, AUseFill: Boolean);
+procedure TMetafileParser.EmitPrimitive(AKind: TMetafilePrimitiveKind; const APoints: TMetafilePointArray; const APointCounts: TMetafileIntegerArray; const AText: UnicodeString; ARecordType: Cardinal;
+  const ARecordName: string; AUseStroke, AUseFill: Boolean);
 var
   Stroke: TMetafileStrokeStyle;
   Fill: TMetafileFillStyle;
@@ -2939,8 +3025,7 @@ var
     for Sub := 0 to High(ACloseCounts) do
     begin
       Count := ACloseCounts[Sub];
-      NeedsClose := (Count > 1) and (StartIndex + Count <= Length(AClosePoints)) and
-        not SamePoint(AClosePoints[StartIndex], AClosePoints[StartIndex + Count - 1]);
+      NeedsClose := (Count > 1) and (StartIndex + Count <= Length(AClosePoints)) and not SamePoint(AClosePoints[StartIndex], AClosePoints[StartIndex + Count - 1]);
       if NeedsClose then
         Inc(ExtraCount);
       Inc(StartIndex, Count);
@@ -2963,8 +3048,7 @@ var
         AClosePoints[OutIndex] := Source[StartIndex + I];
         Inc(OutIndex);
       end;
-      if (Count > 1) and (StartIndex + Count <= Length(Source)) and
-        not SamePoint(Source[StartIndex], Source[StartIndex + Count - 1]) then
+      if (Count > 1) and (StartIndex + Count <= Length(Source)) and not SamePoint(Source[StartIndex], Source[StartIndex + Count - 1]) then
       begin
         AClosePoints[OutIndex] := Source[StartIndex];
         Inc(OutIndex);
@@ -2974,6 +3058,7 @@ var
     end;
     SetLength(AClosePoints, OutIndex);
   end;
+
 begin
   Stroke := CurrentStroke;
   Stroke.Visible := Stroke.Visible and AUseStroke;
@@ -3019,7 +3104,8 @@ begin
     FOnObjectPlay(Self);
 end;
 
-procedure TMetafileParser.EmitImagePrimitive(const APoints: TMetafilePointArray; const APointCounts: TMetafileIntegerArray; const AImage: TMetafileImageStyle; ARecordType: Cardinal; const ARecordName: string);
+procedure TMetafileParser.EmitImagePrimitive(const APoints: TMetafilePointArray; const APointCounts: TMetafileIntegerArray; const AImage: TMetafileImageStyle; ARecordType: Cardinal;
+  const ARecordName: string);
 begin
   FCurrent.Kind := mpkImage;
   FCurrent.Points := CopyPoints(APoints);
@@ -3301,7 +3387,7 @@ begin
   Cpt := Integer(R.cptl);
   if ABezierTo then
   begin
-    SetLength(BezierPoints, Cpt  + 1);
+    SetLength(BezierPoints, Cpt + 1);
     BezierPoints[0] := LogicalToOutput(DCStateOf(Self).State.CurrentPos);
     Offset := 1;
   end
@@ -3329,7 +3415,7 @@ begin
   begin
     SrcPt := @R.aptl[0];
     Inc(SrcPt, Cpt - 1);
-    DCStateOf(Self).State.NextPos := IntPoint(SrcPt^.X,SrcPt^.Y);
+    DCStateOf(Self).State.NextPos := IntPoint(SrcPt^.X, SrcPt^.Y);
   end;
 end;
 
@@ -3360,11 +3446,10 @@ begin
   else
     SetLength(BezierPoints, Cpt);
 
-
   SrcPt := @R.apts[0];
   for I := 0 to Cpt - 1 do
   begin
-    BezierPoints[I + Offset] := LogicalToOutput(SrcPt^.X,SrcPt^.Y);
+    BezierPoints[I + Offset] := LogicalToOutput(SrcPt^.X, SrcPt^.Y);
     Inc(SrcPt);
   end;
 
@@ -3376,12 +3461,11 @@ begin
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
 
-
   if ABezierTo and (Cpt > 0) then
   begin
     SrcPt := @R.apts[0];
     Inc(SrcPt, Cpt - 1);
-    DCStateOf(Self).State.NextPos := IntPoint(SrcPt^.X,SrcPt^.Y);
+    DCStateOf(Self).State.NextPos := IntPoint(SrcPt^.X, SrcPt^.Y);
   end;
 end;
 
@@ -3411,7 +3495,7 @@ begin
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
   if R.cptl > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X,R.aptl[R.cptl - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X, R.aptl[R.cptl - 1].Y);
 end;
 
 procedure TMetafileParser.HandlePolylineTo16(ARecord: PEnhMetaRecord);
@@ -3523,7 +3607,7 @@ begin
   end;
   FlushCurrent(False);
   if R.cptl > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X,R.aptl[R.cptl - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X, R.aptl[R.cptl - 1].Y);
 end;
 
 procedure TMetafileParser.HandlePolyDraw16(ARecord: PEnhMetaRecord);
@@ -3630,7 +3714,7 @@ begin
     AppendPathOpenPolyline(Points)
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
-  DCStateOf(Self).State.NextPos := IntPoint(R.ptl.X,R.ptl.Y);
+  DCStateOf(Self).State.NextPos := IntPoint(R.ptl.X, R.ptl.Y);
 end;
 
 procedure TMetafileParser.HandleMoveTo(ARecord: PEnhMetaRecord);
@@ -3639,7 +3723,7 @@ var
   Points: TMetafilePointArray;
 begin
   R := PEMRMoveToEx(ARecord);
-  DCStateOf(Self).State.NextPos := IntPoint(R.ptl.X,R.ptl.Y);
+  DCStateOf(Self).State.NextPos := IntPoint(R.ptl.X, R.ptl.Y);
   if PathBuilderOf(Self).Recording then
   begin
     SetLength(Points, 1);
@@ -3675,18 +3759,18 @@ var
   Points: TMetafilePointArray;
   Counts: TMetafileIntegerArray;
   I: Integer;
-  cx, cy, RX, RY, A: Double;
+  cx, cy, Rx, Ry, A: Double;
 begin
   R := PEMREllipse(ARecord);
   cx := (R.rclBox.Left + R.rclBox.Right) * 0.5;
   cy := (R.rclBox.Top + R.rclBox.Bottom) * 0.5;
-  RX := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
-  RY := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
+  Rx := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
+  Ry := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
   SetLength(Points, DEFAULT_ELLIPSE_SEGMENTS + 1);
   for I := 0 to DEFAULT_ELLIPSE_SEGMENTS do
   begin
     A := 2 * Pi * I / DEFAULT_ELLIPSE_SEGMENTS;
-    Points[I] := LogicalToOutput(cx + Cos(A) * RX, cy + Sin(A) * RY);
+    Points[I] := LogicalToOutput(cx + Cos(A) * Rx, cy + Sin(A) * Ry);
   end;
   SetLength(Counts, 1);
   Counts[0] := Length(Points);
@@ -3701,7 +3785,7 @@ var
   R: PEMRRoundRectLocal;
   Points: TMetafilePointArray;
   Counts: TMetafileIntegerArray;
-  L, T, Rt, B, RX, RY: Double;
+  L, T, Rt, B, Rx, Ry: Double;
 
   procedure AddArc(cx, cy, A0, A1: Double);
   var
@@ -3712,7 +3796,7 @@ var
     for I := 0 to N do
     begin
       A := A0 + (A1 - A0) * I / N;
-      AppendPoint(Points, LogicalToOutput(cx + Cos(A) * RX, cy + Sin(A) * RY));
+      AppendPoint(Points, LogicalToOutput(cx + Cos(A) * Rx, cy + Sin(A) * Ry));
     end;
   end;
 
@@ -3722,15 +3806,15 @@ begin
   T := R.rclBox.Top;
   Rt := R.rclBox.Right;
   B := R.rclBox.Bottom;
-  RX := Abs(R.szlCorner.cx) * 0.5;
-  RY := Abs(R.szlCorner.cy) * 0.5;
-  RX := Min(RX, Abs(Rt - L) * 0.5);
-  RY := Min(RY, Abs(B - T) * 0.5);
+  Rx := Abs(R.szlCorner.cx) * 0.5;
+  Ry := Abs(R.szlCorner.cy) * 0.5;
+  Rx := Min(Rx, Abs(Rt - L) * 0.5);
+  Ry := Min(Ry, Abs(B - T) * 0.5);
   SetLength(Points, 0);
-  AddArc(Rt - RX, T + RY, -Pi / 2, 0);
-  AddArc(Rt - RX, B - RY, 0, Pi / 2);
-  AddArc(L + RX, B - RY, Pi / 2, Pi);
-  AddArc(L + RX, T + RY, Pi, 3 * Pi / 2);
+  AddArc(Rt - Rx, T + Ry, -Pi / 2, 0);
+  AddArc(Rt - Rx, B - Ry, 0, Pi / 2);
+  AddArc(L + Rx, B - Ry, Pi / 2, Pi);
+  AddArc(L + Rx, T + Ry, Pi, 3 * Pi / 2);
   if (Length(Points) > 1) and not PointsAlmostEqual(Points[0], Points[High(Points)]) then
     AppendPoint(Points, Points[0]);
   SetLength(Counts, 1);
@@ -3746,7 +3830,7 @@ var
   R: PEMRArc;
   Points: TMetafilePointArray;
   Counts: TMetafileIntegerArray;
-  cx, cy, RX, RY, A0, A1, A, Sweep: Double;
+  cx, cy, Rx, Ry, A0, A1, A, Sweep: Double;
   I, N: Integer;
   StartP, EndP, CenterP: TMetafilePoint;
   IsClosedShape: Boolean;
@@ -3754,13 +3838,13 @@ begin
   R := PEMRArc(ARecord);
   cx := (R.rclBox.Left + R.rclBox.Right) * 0.5;
   cy := (R.rclBox.Top + R.rclBox.Bottom) * 0.5;
-  RX := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
-  RY := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
-  if (RX <= 0) or (RY <= 0) then
+  Rx := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
+  Ry := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
+  if (Rx <= 0) or (Ry <= 0) then
     Exit;
 
-  A0 := ArcTan2((R.ptlStart.Y - cy) / RY, (R.ptlStart.X - cx) / RX);
-  A1 := ArcTan2((R.ptlEnd.Y - cy) / RY, (R.ptlEnd.X - cx) / RX);
+  A0 := ArcTan2((R.ptlStart.Y - cy) / Ry, (R.ptlStart.X - cx) / Rx);
+  A1 := ArcTan2((R.ptlEnd.Y - cy) / Ry, (R.ptlEnd.X - cx) / Rx);
   if DCStateOf(Self).State.ArcDirection = AD_CLOCKWISE then
   begin
     while A1 < A0 do
@@ -3785,7 +3869,7 @@ begin
   for I := 0 to N do
   begin
     A := A0 + Sweep * I / N;
-    AppendPoint(Points, LogicalToOutput(cx + Cos(A) * RX, cy + Sin(A) * RY));
+    AppendPoint(Points, LogicalToOutput(cx + Cos(A) * Rx, cy + Sin(A) * Ry));
   end;
 
   if AKind = EMR_PIE then
@@ -3808,7 +3892,7 @@ begin
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
 
   if AKind = EMR_ARCTO then
-    DCStateOf(Self).State.NextPos := IntPoint(R.ptlEnd.X,R.ptlEnd.Y);
+    DCStateOf(Self).State.NextPos := IntPoint(R.ptlEnd.X, R.ptlEnd.Y);
 end;
 
 procedure TMetafileParser.HandleAngleArc(ARecord: PEnhMetaRecord);
@@ -3977,8 +4061,8 @@ begin
   DCStateOf(Self).SetTextRecordMetrics(0, EmptyRectD, EmptyDx, EmptyDy);
 end;
 
-procedure TMetafileParser.EmitTextCurves(ARecordType: Cardinal; const ARecordName: string; const AText: UnicodeString; const AOrigin: TMetafilePoint; AGlyphIndexes: PWord;
-  AGlyphCount: Integer; const ADx, ADy: TMetafileIntegerArray; AOptions: Cardinal);
+procedure TMetafileParser.EmitTextCurves(ARecordType: Cardinal; const ARecordName: string; const AText: UnicodeString; const AOrigin: TMetafilePoint; AGlyphIndexes: PWord; AGlyphCount: Integer;
+  const ADx, ADy: TMetafileIntegerArray; AOptions: Cardinal);
 var
   CurvePoints: TMetafilePointArray;
   CurveCounts: TMetafileIntegerArray;
@@ -4210,14 +4294,14 @@ var
     P0, P1, P2, P3: TMetafilePoint;
     V0, V1: TTriVertex;
   begin
-    if not (VertexInRange(AR.UpperLeft) and VertexInRange(AR.LowerRight)) then
+    if not(VertexInRange(AR.UpperLeft) and VertexInRange(AR.LowerRight)) then
       Exit;
     V0 := Verts[AR.UpperLeft];
     V1 := Verts[AR.LowerRight];
-    P0 := LogicalToOutput(V0.x, V0.y);
-    P1 := LogicalToOutput(V1.x, V0.y);
-    P2 := LogicalToOutput(V1.x, V1.y);
-    P3 := LogicalToOutput(V0.x, V1.y);
+    P0 := LogicalToOutput(V0.X, V0.Y);
+    P1 := LogicalToOutput(V1.X, V0.Y);
+    P2 := LogicalToOutput(V1.X, V1.Y);
+    P3 := LogicalToOutput(V0.X, V1.Y);
     SetLength(One, 5);
     One[0] := P0;
     One[1] := P1;
@@ -4230,7 +4314,7 @@ var
 
   procedure AppendGradientTriangle(const AT: TGradientTriangle);
   begin
-    if not (VertexInRange(AT.Vertex1) and VertexInRange(AT.Vertex2) and VertexInRange(AT.Vertex3)) then
+    if not(VertexInRange(AT.Vertex1) and VertexInRange(AT.Vertex2) and VertexInRange(AT.Vertex3)) then
       Exit;
     SetLength(One, 4);
     One[0] := Fill.Gradient.Vertices[AT.Vertex1].Point;
@@ -4265,7 +4349,7 @@ begin
   SetLength(Fill.Gradient.Vertices, R.nVer);
   for I := 0 to Integer(R.nVer) - 1 do
   begin
-    Fill.Gradient.Vertices[I].Point := LogicalToOutput(Verts[I].x, Verts[I].y);
+    Fill.Gradient.Vertices[I].Point := LogicalToOutput(Verts[I].X, Verts[I].Y);
     Fill.Gradient.Vertices[I].Red := Verts[I].Red;
     Fill.Gradient.Vertices[I].Green := Verts[I].Green;
     Fill.Gradient.Vertices[I].Blue := Verts[I].Blue;
@@ -4336,7 +4420,7 @@ var
       SetLength(AData.BitmapInfo, 0);
     if not ReadRecordBytes(ARecord, AOffBits, ACbBits, AData.Bits) then
       SetLength(AData.Bits, 0);
-    NormalizeMetafileDIB(AData.BitmapInfo,AData.Bits,AUsage);
+    NormalizeMetafileDIB(AData.BitmapInfo, AData.Bits, AUsage);
   end;
 
   procedure SetRectGeometry(AX, AY, ACX, ACY: Integer);
@@ -4389,7 +4473,7 @@ var
     Image.ForegroundRop3 := MetafileRop4ForegroundByte(AOperation);
     Image.BackgroundRop3 := MetafileRop4BackgroundByte(AOperation);
     Image.OperationName := MetafileRasterOperationName(AKind, AOperation);
-    if not ((AKind = mrokRop3) or (AKind = mrokRop4)) then
+    if not((AKind = mrokRop3) or (AKind = mrokRop4)) then
     begin
       Image.Rop3 := 0;
       Image.ForegroundRop3 := 0;
@@ -4410,8 +4494,7 @@ var
     Image.SourceConstantAlpha := Byte(ABlend shr 16);
     Image.AlphaFormat := Byte(ABlend shr 24);
     Image.HasPerPixelAlpha := (Image.AlphaFormat and $01) <> 0;
-    Image.OperationName := Format('ALPHABLEND op=%d flags=%d alpha=%d format=%d',
-      [Image.BlendOperation, Image.BlendFlags, Image.SourceConstantAlpha, Image.AlphaFormat]);
+    Image.OperationName := Format('ALPHABLEND op=%d flags=%d alpha=%d format=%d', [Image.BlendOperation, Image.BlendFlags, Image.SourceConstantAlpha, Image.AlphaFormat]);
   end;
 
 begin
@@ -4563,7 +4646,7 @@ begin
   Obj.Kind := mokPen;
   Obj.Stroke.Visible := (R.lopn.lopnStyle and PS_STYLE_MASK_LOCAL) <> PS_NULL;
   Obj.Stroke.Color := R.lopn.lopnColor;
-  Obj.Stroke.Hairline:=R.lopn.lopnWidth.X=0;
+  Obj.Stroke.Hairline := R.lopn.lopnWidth.X = 0;
   Obj.Stroke.Width := R.lopn.lopnWidth.X;
   if Obj.Stroke.Width <= 0 then
     Obj.Stroke.Width := 1;
@@ -4585,13 +4668,13 @@ begin
   Obj.Kind := mokPen;
   Obj.Stroke.Visible := (R.elp.elpPenStyle and PS_STYLE_MASK_LOCAL) <> PS_NULL;
   Obj.Stroke.Color := R.elp.elpColor;
-  Obj.Stroke.Hairline:=(R.elp.elpPenStyle and PS_GEOMETRIC)=0;
+  Obj.Stroke.Hairline := (R.elp.elpPenStyle and PS_GEOMETRIC) = 0;
   Obj.Stroke.Width := R.elp.elpWidth;
   if Obj.Stroke.Width <= 0 then
     Obj.Stroke.Width := 1;
   Obj.Stroke.Style := R.elp.elpPenStyle;
-  Obj.Stroke.BrushStyle:=R.elp.elpBrushStyle;
-  Obj.Stroke.Hatch:=R.elp.elpHatch;
+  Obj.Stroke.BrushStyle := R.elp.elpBrushStyle;
+  Obj.Stroke.Hatch := R.elp.elpHatch;
   Obj.Stroke.EndCap := R.elp.elpPenStyle and PS_ENDCAP_MASK;
   Obj.Stroke.Join := R.elp.elpPenStyle and PS_JOIN_MASK;
   Obj.Stroke.MiterLimit := DCStateOf(Self).State.MiterLimit;
@@ -4603,7 +4686,7 @@ begin
       Exit;
     if not ReadRecordBytes(ARecord, R.offBits, R.cbBits, Obj.Stroke.Brush.Bits) then
       Exit;
-    NormalizeMetafileDIB(Obj.Stroke.Brush.BitmapInfo,Obj.Stroke.Brush.Bits,Obj.Stroke.Brush.Usage);
+    NormalizeMetafileDIB(Obj.Stroke.Brush.BitmapInfo, Obj.Stroke.Brush.Bits, Obj.Stroke.Brush.Usage);
   end;
   DCStateOf(Self).SetObject(R.ihPen, Obj);
 end;
@@ -4617,7 +4700,7 @@ begin
   FillChar(Obj, SizeOf(Obj), 0);
   Obj.Active := True;
   Obj.Kind := mokBrush;
-  Obj.Fill.Visible := (R.lb.lbStyle<>BS_NULL);
+  Obj.Fill.Visible := (R.lb.lbStyle <> BS_NULL);
   Obj.Fill.Color := R.lb.lbColor;
   Obj.Fill.Style := R.lb.lbStyle;
   Obj.Fill.Hatch := R.lb.lbHatch;
@@ -5037,8 +5120,7 @@ begin
   EffectiveFlatness := FTextFlatness;
   if EffectiveFlatness <= 0 then
     EffectiveFlatness := FFlatness;
-  Result := TextOutlineConverterOf(Self).TextToFlatPolygons(AText, AOrigin, ALogFont, AGlyphIndexes, AGlyphCount, ADx, ADy, AOptions, DCStateOf(Self), EffectiveFlatness, APoints,
-    APointCounts);
+  Result := TextOutlineConverterOf(Self).TextToFlatPolygons(AText, AOrigin, ALogFont, AGlyphIndexes, AGlyphCount, ADx, ADy, AOptions, DCStateOf(Self), EffectiveFlatness, APoints, APointCounts);
 end;
 
 function TMetafileTextOutlineConverter.TextToFlatPolygons(const AText: UnicodeString; const AOrigin: TMetafilePoint; const ALogFont: TLogFontW; AGlyphIndexes: PWord; AGlyphCount: Integer;
@@ -5292,7 +5374,6 @@ begin
     DeleteDC(DC);
   end;
 end;
-
 
 {$I MetafileParser.Replay.inc}
 
