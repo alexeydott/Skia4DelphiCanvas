@@ -28,9 +28,9 @@ def check(directory):
         contours=sum(len(re.findall('[Mm]',path.attrib.get('d',''))) for path in svg.findall('.//' + NS + 'path'))
         assert contours > 100, (name,contours)
         assert not svg.findall('.//' + NS + 'text'), name + ': font-dependent SVG text'
-        if name == '12-text-on-path':
-            assert not svg.findall('.//' + NS + 'image'), 'Text-on-path SVG contains raster fragments'
-            assert not list(page.images), 'Text-on-path PDF contains raster fragments'
+        if name in ('07-text-fonts', '12-text-on-path'):
+            assert not svg.findall('.//' + NS + 'image'), name + ': SVG text contains raster fragments'
+            assert not list(page.images), name + ': PDF text contains raster fragments'
         assert (directory / (name + '.skp')).read_bytes().startswith(b'skiapict'), name
     quick = PdfReader(directory / 'quickstart.pdf', strict=True)
     assert len(quick.pages) == 1 and list(quick.pages[0].mediabox) == [0, 0, 600, 360]

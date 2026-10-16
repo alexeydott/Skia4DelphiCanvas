@@ -24,6 +24,14 @@ compiler caches and test exports belong in the separate build directories.
 | `runtime/win64` | Skia 151.0.1, x86-64 PE DLL | Same pinned submodule as Linux |
 | `runtime/windows-static` | Win32/Win64 COFF objects and static Pascal API | Same pinned submodule as Linux |
 
+All five native builds include the SVG nearest-neighbor sampling fix: pixmap
+images retain `image-rendering="pixelated"` when exported to SVG. The build scripts
+stage compatibility sources under `runtime/build`, leaving the pinned Skia
+submodule unchanged. Windows builds also apply the DirectWrite compiler fix.
+`native_compatibility` in Windows DLL metadata and static manifests, and
+`linux64/build-compat.json` for Linux, record the patches and staged source hashes.
+Use these project-built runtimes with the matching Pascal bindings.
+
 Windows DLLs are rebuilt with LLVM-MinGW 18.1.8 UCRT. Their C++ runtime is
 embedded; deploy only the DLL matching the EXE architecture. `build-info.json`
 records the native revision, GN arguments and DLL hash.

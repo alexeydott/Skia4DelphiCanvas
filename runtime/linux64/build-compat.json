@@ -1,0 +1,10 @@
+{
+  "patches": [
+    "svg-nearest-neighbor"
+  ],
+  "source_sha256": {
+    "SkSVGCanvas.cpp": "b911ce0f560855753c36c09873d59faaa68e762eb24940172089a8b06f9e86f1",
+    "SkSVGDevice.cpp": "2130a71226744086819c020dce996e89c2d0d8a09b70a79770df7e9cf6e477cd",
+    "SkSVGDevice.h": "9e1a7d2ab0ad448f9c3fc7ed34537bc199750fb1eb072d8a16abe2d478bfc80f"
+  }
+}

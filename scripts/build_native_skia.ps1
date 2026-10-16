@@ -82,6 +82,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $build $binary) -Destination $installed -Force
         $info = @{native_version=$nativeVersion; pascal_api='7.3.0'; platform=$Platform;
                   source_revision=(& git rev-parse HEAD); sha256=(Get-FileHash $installed).Hash; args=$arguments}
+        $info.native_compatibility = Get-Content (Join-Path $build 'compat/manifest.json') -Raw | ConvertFrom-Json
         $info | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $destination 'build-info.json') -Encoding utf8
         & python (Join-Path $PSScriptRoot 'verify_native_skia_api.py') $installed
         if ($LASTEXITCODE -ne 0) { throw 'Skia DLL API verification failed' }

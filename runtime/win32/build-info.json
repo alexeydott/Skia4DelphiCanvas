@@ -1,8 +1,20 @@
-{
-  "native_version": "151.0.1",
+﻿{
+  "sha256": "3A49241C465474C1692B4D829D04908903E8991BD86266091095C2B6B7656918",
   "source_revision": "e5e4933ea025f5e1b8a07d038e38869e205deb06",
   "platform": "win32",
-  "sha256": "B6EF62E3C0D30ACA5AF4B6D1A54C0FA6ACF92C092395768C8CD00DFE5B17C5FA",
   "args": "is_official_build = true\nis_debug = false\ntarget_os = \"win\"\ntarget_cpu = \"x86\"\nis_sk4d_build = true\nis_sk4d_component_build = true\nwin_mingw = \"D:/projects/externals/skia/toolchains/llvm-mingw-20240619-ucrt-x86_64\"\nskia_use_partition_alloc = false\nskia_enable_tools = false\nskia_use_libavif = false\nskia_use_dng_sdk = false\nskia_use_freetype = false\nskia_use_system_expat = false\nskia_use_system_harfbuzz = false\nskia_use_system_icu = false\nskia_use_system_libjpeg_turbo = false\nskia_use_system_libpng = false\nskia_use_system_libwebp = false\nskia_use_system_zlib = false\nextra_cflags = [ \"-fasynchronous-unwind-tables\", \"-fno-addrsig\", \"-femulated-tls\" ]\nextra_cflags_cc = [ \"-fno-exceptions\" ]\nextra_ldflags = [ \"-static\" ]\nskia_use_vulkan = true",
-  "pascal_api": "7.3.0"
+  "pascal_api": "7.3.0",
+  "native_version": "151.0.1",
+  "native_compatibility": {
+    "patches": [
+      "svg-nearest-neighbor",
+      "directwrite-constexpr"
+    ],
+    "source_sha256": {
+      "SkFontMgr_win_dw.cpp": "0e19251be3288880969b4788c5e54867407af02f2250e80575ffa5ac7bf03ce6",
+      "SkSVGCanvas.cpp": "b911ce0f560855753c36c09873d59faaa68e762eb24940172089a8b06f9e86f1",
+      "SkSVGDevice.cpp": "2130a71226744086819c020dce996e89c2d0d8a09b70a79770df7e9cf6e477cd",
+      "SkSVGDevice.h": "9e1a7d2ab0ad448f9c3fc7ed34537bc199750fb1eb072d8a16abe2d478bfc80f"
+    }
+  }
 }

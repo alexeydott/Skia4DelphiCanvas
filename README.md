@@ -1,4 +1,4 @@
-﻿This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG.
+This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG.
 
 All repository-relative paths and commands below are relative to the project
 root, `D:\projects\externals\Skia4DelphiCanvas` on Windows or
@@ -86,7 +86,7 @@ export FPC=/home/at/skia-canvas-toolchain/fpcsrc/compiler/ppcx64
 export FPC_UNITS_ROOT=/home/at/skia-canvas-toolchain/units/x86_64-linux
 export LAZARUS_ROOT=/mnt/d/fpc/lazarus
 export SKIA_LIBRARY_DIR="$PWD/runtime/linux64"
-unset SKIA_EMF_FILTER
+unset SKIA_EMF_FILTER SKIA_TEST_GROUP
 bash tests/run_tests_linux.sh
 bash demo/run_demos_linux.sh --verify
 ```
@@ -96,7 +96,10 @@ bash demo/run_demos_linux.sh --verify
 Use **Skia4Delphi 7.3.0 Pascal API at `fce5db2` with native Skia 151.0.1** for every
 configuration below. The DLLs and static objects are built from the same
 `sk4d/m151` checkout, revision `e5e4933ea025f5e1b8a07d038e38869e205deb06`.
-Do not combine these bindings with the old 6.x runtime package.
+Use the project-built DLLs, static objects and Linux shared library: the build
+scripts apply an SVG nearest-neighbor sampling fix to generated compatibility
+sources outside the pinned submodule. Unmodified upstream binaries do not
+include this fix. Do not combine these bindings with the old 6.x runtime package.
 
 The Pascal units are pinned to upstream
 [`fce5db2ffcf547f597f5f0a6b2125d779d5598e3`](https://github.com/skia4delphi/skia4delphi/commit/fce5db2ffcf547f597f5f0a6b2125d779d5598e3).
@@ -230,52 +233,6 @@ generated Ninja compile rule. The pinned upstream sources remain unchanged.
 
 Per-platform manifests record native archive and COFF hashes and verify all
 815 imported C API functions.
-
-The complete test suite, including edging/hinting/subpixel and pixmap support,
-passed on 2026-10-16 with `SKIA_EMF_FILTER` unset in every configuration:
-
-| Compiler / platform | Linking tested | Checks per configuration | Failures |
-| --- | --- | ---: | ---: |
-| Delphi Win32 | DLL and static | 6774 | 0 |
-| Delphi Win64 | DLL and static | 6774 | 0 |
-| FPC 3.3.1 Win32 | DLL and static | 6387 | 0 |
-| FPC 3.3.1 Win64 | DLL and static | 6387 | 0 |
-| FPC 3.3.1 Linux x86-64 through WSL | Shared library | 811 | 0 |
-
-Total: **53,455 checks across nine configurations**, with zero FPC heap leaks.
-Each Windows configuration compares all 727 EMF fixtures at 384x256 and 768x512
-and exports their PDF/SVG files. Coverage includes all BLT operations, TextOnPath,
-text-flag combinations, 37 binding regressions and 31 canvas rasterization/pixmap
-checks. The latter exercise rendering pixels, saved settings, acquired-font
-isolation, padded rows, alpha, clipping and recording ownership.
-No additional code fixes were needed for this unfiltered run.
-
-To run the complete Windows matrix from the project root:
-
-```powershell
-Remove-Item Env:SKIA_EMF_FILTER -ErrorAction SilentlyContinue
-./tests/run_tests.cmd
-./scripts/build_delphi_static.ps1 -Target tests -Platforms win32,win64
-foreach ($platform in @('win32', 'win64')) {
-    ./scripts/build_fpc_native.ps1 -Target tests -Platform $platform
-    ./scripts/build_fpc_native.ps1 -Target tests -Platform $platform -StaticSkiaRoot "$PWD/runtime/windows-static"
-}
-```
-
-Use the Linux toolchain settings and `unset SKIA_EMF_FILTER` shown above for WSL.
-All nine demo configurations also passed raster/PDF/SVG comparison, including
-TextOnPath. Static test and demo executables have no Skia DLL dependency.
-
-The packager resolves C++ COMDAT/weak symbols before Pascal linking, keeps
-functions and large tables intact, and splits code at function boundaries to
-stay within Pascal linker relocation limits. Windows/UCRT imports are bound at
-startup; Skia and the C++ runtime code are embedded in the EXE. Native Skia is
-built without C++ exceptions. Win64 codec nonlocal jumps use a tail thunk that
-clears the CRT frame argument, avoiding SEH unwinding through Pascal-converted
-objects. Win32 float math functions missing from UCRT use native wrappers over
-their double counterparts. Original native archives and source fixtures are
-preserved during packaging.
-
 ## Start with the demos
 
 [SkiaUsageExamples.pas](demo/SkiaUsageExamples.pas) contains short procedures that can be reused in an application. They accept an existing canvas and restore its state with `try..finally`.

@@ -403,6 +403,7 @@ end;
     (out/'Source/System.Skia.API.pas').write_text(api,encoding='utf-8-sig')
     (out/f'manifest-{a.platform}.json').write_text(json.dumps({'platform':a.platform,'native_version':version,
         'source_revision':subprocess.check_output(['git','rev-parse','HEAD'],cwd=a.skia_root,text=True).strip(),
+        'native_compatibility':json.loads((archive.parent/'compat/manifest.json').read_text(encoding='utf-8')) if (archive.parent/'compat/manifest.json').exists() else {},
         'pascal_api':'7.3.0','api_imports':len(required),'objects':len(pieces),
         'imports':list(names),'archive_sha256':hashlib.sha256(archive.read_bytes()).hexdigest(),
         'object_sha256':hashlib.sha256(final.read_bytes()).hexdigest(),

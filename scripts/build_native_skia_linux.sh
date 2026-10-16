@@ -36,11 +36,13 @@ skia_use_system_libwebp = true
 skia_use_system_zlib = true
 skia_use_system_freetype2 = true
 '
+python3 "$root/scripts/prepare_native_skia_compat.py" --skia-root "$source_dir" --build-dir "$build_dir" --svg-only
 ninja -C "$build_dir" -j "${SKIA_BUILD_JOBS:-$(nproc)}" sk4d
 python3 "$root/scripts/verify_native_skia_api.py" "$build_dir/libsk4d.so"
 mkdir -p "$runtime_dir"
 install -m 755 "$build_dir/libsk4d.so" "$runtime_dir/libsk4d.so"
 install -m 644 "$source_dir/LICENSE" "$runtime_dir/LICENSE.skia"
+install -m 644 "$build_dir/compat/manifest.json" "$runtime_dir/build-compat.json"
 install -m 644 "$build_dir/args.gn" "$runtime_dir/args.gn"
 {
   grep SK4D_VERSION "$version_header" | tail -1

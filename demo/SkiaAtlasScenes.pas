@@ -1,4 +1,4 @@
-{ Drawing examples for the public canvas API. }
+﻿{ Drawing examples for the public canvas API. }
 unit SkiaAtlasScenes;
 {$IFDEF FPC}{$MODE DELPHIUNICODE}{$CODEPAGE UTF8}{$ENDIF}
 interface
@@ -6,6 +6,8 @@ uses Classes, SysUtils, Types, Math,
   System.UITypes, {$IFNDEF FPC}System.Math.Vectors,{$ENDIF}
   {$IFDEF MSWINDOWS}{$IFDEF FPC}Windows,{$ELSE}Winapi.Windows,{$ENDIF}{$ELSE}LCLType,{$ENDIF} Vcl.Graphics, System.Skia, Vcl.Graphics.Skia, SkiaDemoScenes, SkiaUsageExamples;
 const AtlasPageCount = 12;
+  TextPathCyrillicCaption = 'Текст по кривой';
+  TextPathMixedCaption = 'AB سَلامُ 12';
 function AtlasPageName(Index: Integer): string;
 { Draw individual examples on a ShowcaseWidth x ShowcaseHeight canvas.
   Panel and Note add the page layout and captions. These procedures change
@@ -653,6 +655,11 @@ end;
 procedure DrawTextPaths(C: TSkiaCanvas);
 var X,Y,I: Integer; B: ISkPathBuilder; P: ISkPath; O: TSkiaTextPathOptions; Paint: ISkPaint;
 begin
+  { Regression: UTF-8 source literals must compile identically in Delphi/FPC. }
+  if TextPathCyrillicCaption <> #$0422#$0435#$043A#$0441#$0442' '#$043F#$043E' '#$043A#$0440#$0438#$0432#$043E#$0439 then
+    raise Exception.Create('TextOnPath demo: Cyrillic source encoding mismatch');
+  if TextPathMixedCaption <> 'AB '+#$0633#$064E#$0644#$0627#$0645#$064F+' 12' then
+    raise Exception.Create('TextOnPath demo: Arabic source encoding mismatch');
   for I:=0 to 5 do begin
     case I of
       0: Panel(C,0,0,'Fit text to a cubic curve','Tangent orientation / centered shaped text',X,Y);
@@ -660,7 +667,7 @@ begin
       2: Panel(C,0,1,'Polyline','Repeated vertices / sharp bends / letter spacing',X,Y);
       3: Panel(C,1,1,'Closed path','Wrap around an ellipse / negative offset',X,Y);
       4: Panel(C,0,2,'Reverse and mirror','Reverse direction + vertical mirror / outside',X,Y);
-      5: Panel(C,1,2,'Horizontal orientation','Arabic joining / Cyrillic / upright glyphs',X,Y);
+      5: Panel(C,1,2,'Unicode and orientation','Cyrillic / mixed RTL-LTR / vowel marks',X,Y);
     end;
     B:=TSkPathBuilder.Create;
     if I=3 then B.AddOval(AtlasRectF(X+55,Y+100,X+405,Y+245))
@@ -686,8 +693,11 @@ begin
       3: begin O.Wrap:=True; O.Offset:=-120; O.Distance:=10; C.TextOnPath('Text follows a closed path',P,O); end;
       4: begin O.Reverse:=True; O.MirrorVertical:=True; O.Distance:=-15; C.TextOnPath('Reverse / mirrored text',P,O); end;
       5: begin
-        O.Orientation:=tpoHorizontal; C.TextOnPath('Текст по кривой',P,O);
+        O.Orientation:=tpoHorizontal; C.TextOnPath(TextPathCyrillicCaption,P,O);
         O.Distance:=40; C.TextOnPath(#$0633#$0644#$0627#$0645+'  office',P,O);
+        C.FontEdging:=TSkFontEdging.AntiAlias; C.FontHinting:=TSkFontHinting.Normal;
+        C.FontSubpixel:=True; O.Orientation:=tpoTangent; O.Distance:=-40;
+        C.TextOnPath(TextPathMixedCaption,P,O);
       end;
     end;
     Note(C,X,Y,'TextOnPath / vector outlines in BMP, PDF and SVG');

@@ -111,12 +111,22 @@ end;
 {$I SkiaBltTests.inc}
 {$I SkiaBindingsTests.inc}
 {$I SkiaRasterOptionsTests.inc}
+{$I SkiaAffineRasterTests.inc}
+{$I SkiaAffineTextPathTests.inc}
 {$I SkiaTextPathTests.inc}
 {$I SkiaUnicodeTests.inc}
 {$I SkiaThreadTests.inc}
 {$I SkiaMetafileTests.inc}
 {$I SkiaImageCodecTests.inc}
 begin
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'textpath-affine' then
+  begin
+    Writeln('Test group: textpath-affine');
+    TestTextOnPath;
+    TestAffineTextOnPathOptions;
+  end
+  else
+  begin
   Writeln('Native Skia4Delphi ',TSkVersion.ToString);
   TestNativePngDecoding;
   Check(TestPublicGraphicsTypes,'public VCL/Skia aliases compile and render without extra graphics units');
@@ -127,11 +137,14 @@ begin
   TestCanvasApiGuards;
   TestUpdatedSkiaBindings;
   TestCanvasRasterSettingsAndPixmap;
+  TestAffineRasterOptions;
+  TestAffineTextOnPathOptions;
   T_BltNativeSources;
   TestRops;
   TestNativePathsAndState;
   TestNativeText;
   TestNativeRecordingAndBitmap;
+  end;
   Writeln('Native FPC/Skia: ',Passed,' passed; ',Failed,' failed');
   if Failed<>0 then Halt(1);
 end.

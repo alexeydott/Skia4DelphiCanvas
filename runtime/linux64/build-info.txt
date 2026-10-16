@@ -2,4 +2,4 @@
 Skia4Delphi 7.3.0 Pascal API; native SVG gradients
 e5e4933ea025f5e1b8a07d038e38869e205deb06
 Ubuntu clang version 21.1.8 (6ubuntu1)
-159366b389246b09419f0d3b85db744cd636a987e02f75af4e2ee4d6a6b4a320  libsk4d.so
+a6c7da0671948af85e03e8c30a96bfd43fdec53e9ca20171760ad851ac61e9c5  libsk4d.so

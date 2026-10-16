@@ -302,6 +302,8 @@ end;
 {$I SkiaBltTests.inc}
 {$I SkiaBindingsTests.inc}
 {$I SkiaRasterOptionsTests.inc}
+{$I SkiaAffineRasterTests.inc}
+{$I SkiaAffineTextPathTests.inc}
 {$I SkiaTextPathTests.inc}
 
 procedure T_BitBlt;
@@ -758,6 +760,14 @@ end;
 
 begin
   GPassed:=0; GFailed:=0; GSkipped:=0;
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'textpath-affine' then
+  begin
+    Writeln('Test group: textpath-affine');
+    TestTextOnPath;
+    TestAffineTextOnPathOptions;
+  end
+  else
+  begin
   WriteLn('=== SkiaCanvasTests ===');
   TestNativePngDecoding;
   
@@ -797,6 +807,8 @@ begin
   T_CopyRect;
   TestUpdatedSkiaBindings;
   TestCanvasRasterSettingsAndPixmap;
+  TestAffineRasterOptions;
+  TestAffineTextOnPathOptions;
   T_BltNativeSources;
   T_BitBlt;
   T_StretchBlt;
@@ -861,6 +873,7 @@ begin
   T_CompatFontOrientation;
   T_CompatInsideFrameClosedShapes;
   T_CompatPortableTextFormatting;
+  end;
   Writeln('Skipped: ',GSkipped);
   WriteLn(Format('Итого: %d/%d passed, %d failed',
     [GPassed, GPassed + GFailed, GFailed]));

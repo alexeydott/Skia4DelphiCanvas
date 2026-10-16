@@ -156,6 +156,12 @@
         ],
         "status": "demonstrated"
       },
+      "CollectionFaceCount": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
       "Create": {
         "pages": [
           7,
@@ -199,6 +205,18 @@
         ],
         "status": "demonstrated"
       },
+      "MatchCollectionTypeface": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
+      "MatchTypefaceForText": {
+        "pages": [
+          10
+        ],
+        "status": "demonstrated"
+      },
       "OnChange": {
         "pages": [
           7,
@@ -217,24 +235,6 @@
         "pages": [
           7,
           8
-        ],
-        "status": "demonstrated"
-      },
-      "MatchTypefaceForText": {
-        "pages": [
-          10
-        ],
-        "status": "demonstrated"
-      },
-      "CollectionFaceCount": {
-        "pages": [
-          10
-        ],
-        "status": "demonstrated"
-      },
-      "MatchCollectionTypeface": {
-        "pages": [
-          10
         ],
         "status": "demonstrated"
       }
@@ -347,13 +347,6 @@
         ],
         "status": "demonstrated"
       },
-      "ShapeText": {
-        "pages": [
-          1,
-          8
-        ],
-        "status": "demonstrated"
-      },
       "LastShapeUsedOpenType": {
         "pages": [
           10
@@ -367,6 +360,13 @@
         ],
         "status": "demonstrated",
         "via": "Canvas Lock/Unlock protects the owned GlyphCache for a complete drawing transaction"
+      },
+      "ShapeText": {
+        "pages": [
+          1,
+          8
+        ],
+        "status": "demonstrated"
       },
       "Unlock": {
         "pages": [
@@ -486,6 +486,12 @@
         ],
         "status": "demonstrated"
       },
+      "DrawPixmap": {
+        "pages": [
+          8
+        ],
+        "status": "demonstrated"
+      },
       "Ellipse": {
         "pages": [
           2
@@ -516,9 +522,30 @@
         ],
         "status": "demonstrated"
       },
+      "FontEdging": {
+        "pages": [
+          7,
+          12
+        ],
+        "status": "demonstrated"
+      },
+      "FontHinting": {
+        "pages": [
+          7,
+          12
+        ],
+        "status": "demonstrated"
+      },
       "FontManager": {
         "pages": [
           7
+        ],
+        "status": "demonstrated"
+      },
+      "FontSubpixel": {
+        "pages": [
+          7,
+          12
         ],
         "status": "demonstrated"
       },
@@ -555,6 +582,12 @@
       "LineTo": {
         "pages": [
           2
+        ],
+        "status": "demonstrated"
+      },
+      "Lock": {
+        "pages": [
+          1
         ],
         "status": "demonstrated"
       },
@@ -666,6 +699,12 @@
         ],
         "status": "demonstrated"
       },
+      "SetClipPath": {
+        "pages": [
+          6
+        ],
+        "status": "demonstrated"
+      },
       "SetClipRect": {
         "pages": [
           6
@@ -708,6 +747,12 @@
         ],
         "status": "demonstrated"
       },
+      "TextOnPath": {
+        "pages": [
+          12
+        ],
+        "status": "demonstrated"
+      },
       "TextOut": {
         "pages": [
           7
@@ -732,18 +777,6 @@
         ],
         "status": "demonstrated"
       },
-      "SetClipPath": {
-        "pages": [
-          6
-        ],
-        "status": "demonstrated"
-      },
-      "Lock": {
-        "pages": [
-          1
-        ],
-        "status": "demonstrated"
-      },
       "TryLock": {
         "pages": [
           1
@@ -753,12 +786,6 @@
       "Unlock": {
         "pages": [
           1
-        ],
-        "status": "demonstrated"
-      },
-      "TextOnPath": {
-        "pages": [
-          12
         ],
         "status": "demonstrated"
       }
@@ -781,6 +808,12 @@
       "Height": {
         "pages": [
           5,
+          8
+        ],
+        "status": "demonstrated"
+      },
+      "ReadPixels": {
+        "pages": [
           8
         ],
         "status": "demonstrated"

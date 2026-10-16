@@ -2,29 +2,79 @@
 type
   TSkiaPathGlyph = record
     Path: ISkPath;
-    X, Y, Advance: Single;
+    X, Y, AnchorX, Advance: Single;
   end;
 
   TSkiaPathTextLayout = class
     Glyphs: TArray<TSkiaPathGlyph>;
+    Clusters: TArray<Integer>;
+    procedure PrepareClusters(const Text: string);
     procedure Visit(const Line: Integer; const Info: TSkParagraphVisitorInfo);
   end;
 
+procedure TSkiaPathTextLayout.PrepareClusters(const Text: string);
+var Unicode: ISkUnicode; Bytes: UTF8String; Elem: TSkUnicodeBreakIteratorElem;
+  I, Start: Integer;
+begin
+  { Visitor indices are UTF-8 code points; combining marks share a grapheme anchor. }
+  Bytes := UTF8Encode(Text);
+  SetLength(Clusters, Length(Bytes)+1);
+  Unicode := TSkUnicode.Create;
+  Start := 0;
+  for Elem in Unicode.GetBreakIteratorUTF8(TSkBreakType.Graphemes, Bytes) do
+  begin
+    for I := Start to Elem.Position-1 do Clusters[I] := Start;
+    Start := Elem.Position;
+  end;
+  Clusters[Length(Bytes)] := Length(Bytes);
+end;
+
 procedure TSkiaPathTextLayout.Visit(const Line: Integer; const Info: TSkParagraphVisitorInfo);
-var
-  I, N: Integer;
+var I, J, K, N, Base, NextBase: Integer; IDs: TArray<Word>;
+  Widths: TArray<Single>; Anchor, Advance: Single;
+  function Cluster(Index: Integer): Integer;
+  begin
+    if Info.Utf8Starts[Index] < Cardinal(Length(Clusters)) then
+      Result := Clusters[Info.Utf8Starts[Index]]
+    else Result := Info.Utf8Starts[Index];
+  end;
+  function BaseGlyph(First, Last: Integer): Integer;
+  var Index: Integer;
+  begin
+    Result := First;
+    for Index := First to Last-1 do
+      if Abs(Widths[Index]) > 0.001 then Exit(Index);
+  end;
 begin
   N := Length(Glyphs);
   SetLength(Glyphs, N + Info.Count);
-  for I := 0 to Info.Count - 1 do
+  SetLength(IDs, Info.Count);
+  for I := 0 to Info.Count-1 do IDs[I] := Info.Glyphs[I];
+  Widths := Info.Font.GetWidths(IDs);
+  I := 0;
+  while I < Info.Count do
   begin
-    Glyphs[N + I].Path := Info.Font.GetPath(Info.Glyphs[I]);
-    Glyphs[N + I].X := Info.Origin.X + Info.Positions[I].X;
-    Glyphs[N + I].Y := Info.Origin.Y + Info.Positions[I].Y;
-    if I + 1 < Info.Count then
-      Glyphs[N + I].Advance := Info.Positions[I + 1].X - Info.Positions[I].X
-    else
-      Glyphs[N + I].Advance := Info.AdvanceX - Info.Positions[I].X;
+    J := I+1;
+    while (J < Info.Count) and (Cluster(J) = Cluster(I)) do Inc(J);
+    Base := BaseGlyph(I, J);
+    Anchor := Info.Positions[Base].X;
+    if J < Info.Count then
+    begin
+      K := J+1;
+      while (K < Info.Count) and (Cluster(K) = Cluster(J)) do Inc(K);
+      NextBase := BaseGlyph(J, K);
+      Advance := Info.Positions[NextBase].X-Anchor;
+    end
+    else Advance := Info.AdvanceX-Anchor;
+    for K := I to J-1 do
+    begin
+      Glyphs[N+K].Path := Info.Font.GetPath(Info.Glyphs[K]);
+      Glyphs[N+K].X := Info.Origin.X+Info.Positions[K].X;
+      Glyphs[N+K].Y := Info.Origin.Y+Info.Positions[K].Y;
+      Glyphs[N+K].AnchorX := Info.Origin.X+Anchor;
+      Glyphs[N+K].Advance := Advance;
+    end;
+    I := J;
   end;
 end;
 
@@ -144,6 +194,7 @@ begin
     Builder.AddText(Text);
     Paragraph := Builder.Build;
     Paragraph.Layout(1.0E8);
+    Layout.PrepareClusters(Text);
     Paragraph.Visit(
       procedure(const Line: Integer; const Info: TSkParagraphVisitorInfo)
       begin
@@ -170,9 +221,9 @@ begin
     begin
       Center := Glyph.Advance / 2;
       if Options.MirrorHorizontal then
-        D := Start + Paragraph.MaxIntrinsicWidth - Glyph.X - Center
+        D := Start + Paragraph.MaxIntrinsicWidth - Glyph.AnchorX - Center
       else
-        D := Start + Glyph.X + Center;
+        D := Start + Glyph.AnchorX + Center;
       if Options.Wrap and Measure.IsClosed then
         D := D - Floor(D / LengthPx) * LengthPx
       else if (D < 0) or (D > LengthPx) then
@@ -192,7 +243,7 @@ begin
         if Options.Orientation = tpoTangent then
           FCanvas.Rotate(ArcTan2(Tangent.Y, Tangent.X) * 180 / Pi);
         FCanvas.Scale(SX, SY);
-        FCanvas.Translate(-Center, Glyph.Y - Baseline);
+        FCanvas.Translate(Glyph.X - Glyph.AnchorX - Center, Glyph.Y - Baseline);
         FCanvas.DrawPath(Glyph.Path, Paint);
       finally
         FCanvas.Restore;
