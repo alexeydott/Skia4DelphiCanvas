@@ -41,7 +41,7 @@ The Linux build and runners check all Pascal-loader imports against the
 library's exported symbols before execution.
 
 All 37 binding regressions pass with range checking under Delphi/FPC Win32/Win64
-DLL/static and Linux FPC 3.3.1. The complete unfiltered suite passes 350,104 checks
-after the TextOnPath grapheme-anchor fix, with zero FPC heap leaks. The
+DLL/static and Linux FPC 3.3.1. The complete unfiltered suite passes 355,158 checks
+after the TextOnPath grapheme-anchor and input-validation fixes, with zero FPC heap leaks. The
 TextOnPath feature group contributes 272,484 checks across nine configurations. All 815 Pascal C API imports are available in the
 pinned native libraries.

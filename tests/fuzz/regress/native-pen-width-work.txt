@@ -1,0 +1,2 @@
+Native GDI rendering regression: native-pen-width-work.
+Must reject excessive device-space stroke work before replay/path capture; no timeout.

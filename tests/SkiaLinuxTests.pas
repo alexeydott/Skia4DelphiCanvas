@@ -23,6 +23,7 @@ end;
 {$I SkiaAdvancedTests.inc}
 {$I SkiaAtlasTests.inc}
 {$I SkiaImageCodecTests.inc}
+{$I SkiaInputValidationTests.inc}
 {$I SkiaThreadTests.inc}
 {$I SkiaBltTests.inc}
 {$I SkiaBindingsTests.inc}
@@ -191,6 +192,25 @@ begin
 end;
 
 begin
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review-compat' then
+  begin
+    T_CompatPenModes;
+    T_CompatCopyRops;
+    T_CompatTransparencyAndMirroring;
+    T_CompatVectorRasterOps;
+    T_CompatClipStackAndFlood;
+    T_CompatSourceCoordinates;
+    T_CompatPrepaintedSurface;
+    T_CompatBrushKeyAndFrame;
+    T_CompatNonRectangularClip;
+    T_CompatInsideFrameClosedShapes;
+    T_BltNativeSources;
+    TestInputValidation;
+  end
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review' then
+    TestInputValidation
+  else
   if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'textpath-affine' then
   begin
     Writeln('Test group: textpath-affine');
@@ -199,6 +219,7 @@ begin
   end
   else
   begin
+  TestInputValidation;
   Writeln('Native Linux / FPC / Skia ',TSkVersion.ToString);
   TestUpdatedSkiaBindings;
   TestCanvasRasterSettingsAndPixmap;

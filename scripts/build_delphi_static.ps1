@@ -47,6 +47,9 @@ foreach ($platform in $Platforms) {
                 & (Join-Path $output "$program.exe")
                 if ($LASTEXITCODE -ne 0) { throw "Execution failed: $program / $platform (exit $LASTEXITCODE)" }
             } finally { $env:PATH = $previousPath }
+            if ($Target -eq 'tests') {
+                & (Join-Path $PSScriptRoot 'run_emf_fuzz.ps1') -CompilerKind Delphi -Platform $platform -Static -CompilerRoot $CompilerRoot -StaticSkiaRoot $StaticSkiaRoot -OutputDirectory (Join-Path $output 'fuzz')
+            }
         }
     } finally { Pop-Location }
 }

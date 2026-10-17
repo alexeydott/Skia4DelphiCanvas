@@ -1,4 +1,4 @@
-{ EMF vector playback with native per-record raster composition. }
+﻿{ EMF vector playback with native per-record raster composition. }
 type
   TMetafileTextRun = record
     Glyphs, Background, OpaqueRect, Clip: ISkPath;
@@ -15,6 +15,7 @@ type
     FBefore, FClip: TArray<TAlphaColor>;
     FTextPath, FTextBackgroundPath, FTextOpaqueRectPath, FTextClipPath, FTextNativeClipPath: ISkPath;
     FStrokePath: ISkPath;
+    FStrokeWidenFailed, FBeforeIsTile: Boolean;
     FTextRuns: TArray<TMetafileTextRun>;
     FDevicePixel: TPoint;
     FMapping: TMatrix;
@@ -83,8 +84,8 @@ begin
     SY := Header.szlDevice.cy / (Header.szlMillimeters.cy * 100.0);
   Left := Header.rclFrame.Left * SX;
   Top := Header.rclFrame.Top * SY;
-  Width := (Header.rclFrame.Right - Header.rclFrame.Left) * SX;
-  Height := (Header.rclFrame.Bottom - Header.rclFrame.Top) * SY;
+  Width := (Double(Header.rclFrame.Right) - Header.rclFrame.Left) * SX;
+  Height := (Double(Header.rclFrame.Bottom) - Header.rclFrame.Top) * SY;
   if (Abs(Width) < 1E-9) or (Abs(Height) < 1E-9) then
     Exit;
   M := TMatrix.Identity;
@@ -487,7 +488,9 @@ end;
 
 procedure TMetafilePlayback.RecordReady(Sender: TObject; ADC: HDC; ATable: Pointer; ARecord: PEnhMetaRecord; AObjects: Integer);
 var
-  I, W, H, Saved, Bk, J, Count: Integer;
+  I, W, H, Saved, Bk, J, Count, X, Y, TileW, TileH: Integer;
+  Tile: TRect;
+  TilePixels: array[0..8] of TAlphaColor;
   A, Value: Cardinal;
   TextRecord: Boolean;
   CopyRecord: TBytes;
@@ -495,16 +498,19 @@ var
   XF: TXForm;
 begin
   Inc(FRecordIndex);
+  FReplay.ValidateWork(ADC,ARecord);
   FNativeCommitted := False;
   FTextCommitted := False;
   FHandled := False;
   FNativeFailed := False;
+  FBeforeIsTile := False;
   FTextPath := nil;
   FTextBackgroundPath := nil;
   FTextOpaqueRectPath := nil;
   FTextClipPath := nil;
   FTextNativeClipPath := nil;
   FStrokePath := nil;
+  FStrokeWidenFailed := False;
   FTextRuns := nil;
   if (ARecord.iType = 15) and not FProbe then
   begin
@@ -518,27 +524,6 @@ begin
     2 .. 8, 15, 41 .. 47, 53 .. 56, 62 .. 64, 71 .. 74, 76 .. 81, 83 .. 92, 96, 97, 108, 114, 116, 118:
       FNativeDrawing := True;
   end;
-  if FNativeDrawing and not FProbe then
-  begin
-    W := FTarget.FDeviceWidth;
-    H := FTarget.FDeviceHeight;
-    SetLength(FBefore, W * H);
-    if not FTarget.FBacking.ReadPixels(TSkImageInfo.Create(W, H, TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(FBefore), W * 4) then
-      raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
-    for I := 0 to High(FBefore) do
-    begin
-      if FAlphaBlend then
-      begin
-        A := FBefore[I] shr 24;
-        Value := A shl 24;
-        for J := 0 to 2 do
-          Value := Value or (((((FBefore[I] shr (J * 8)) and 255) * A + 127) div 255) shl (J * 8));
-        FBits[I] := Value;
-      end
-      else
-        FBits[I] := (FBefore[I] and $FFFFFF) or $7F000000;
-    end;
-  end;
   TextRecord := ARecord.iType in [83, 84, 96, 97, 108];
   if not FProbe and not FForceNativeState and not FHasNativePath and not FInNativePath and (ARecord.iType in [2 .. 8, 41 .. 47, 54 .. 56, 85 .. 92]) and GetWorldTransform(ADC, XF) and
     ((Abs(XF.eM11 * XF.eM21 + XF.eM12 * XF.eM22) > 1E-5) or (Abs(Sqr(XF.eM11) + Sqr(XF.eM12) - Sqr(XF.eM21) - Sqr(XF.eM22)) > 1E-5)) then
@@ -549,6 +534,7 @@ begin
     try
       if BeginPath(ADC) and MetafilePlayRecord(ADC, ATable, ARecord, AObjects) and EndPath(ADC) and MetafileWidenPath(ADC) then
         FStrokePath := ReadTextPath;
+      FStrokeWidenFailed := FStrokePath = nil;
     finally
       RestoreDC(ADC, Saved);
       MetafileAbortPath(ADC);
@@ -615,6 +601,55 @@ begin
       finally
         RestoreDC(ADC, Saved);
         SetBkMode(ADC, Bk);
+      end;
+    end;
+  end;
+  { Captured vector text needs native state updates, but no destination pixel round trip. }
+  if TextRecord and not FProbe and not FForceNativeState and not FHasNativePath and
+    (FTextPath <> nil) and (FTextClipPath = nil) and
+    ((GetBkMode(ADC) <> OPAQUE) or (FTextBackgroundPath <> nil)) then
+    FNativeDrawing := False;
+  if FNativeDrawing and not FProbe then
+  begin
+    W := FTarget.FDeviceWidth;
+    H := FTarget.FDeviceHeight;
+    SetLength(FBefore, W * H);
+    FBeforeIsTile := (ARecord.iType = 15) and not FForceNativeState and
+      (FDevicePixel.X >= 0) and (FDevicePixel.X < W) and (FDevicePixel.Y >= 0) and (FDevicePixel.Y < H);
+    if FBeforeIsTile then
+    begin
+      { SETPIXELV changes one pixel; include adjacent pixels for GDI rounding differences. }
+      Tile := Rect(Max(0,FDevicePixel.X-1), Max(0,FDevicePixel.Y-1),
+        Min(W,FDevicePixel.X+2), Min(H,FDevicePixel.Y+2));
+      TileW := Tile.Right-Tile.Left;
+      TileH := Tile.Bottom-Tile.Top;
+      if not FTarget.FBacking.ReadPixels(TSkImageInfo.Create(TileW,TileH,TSkColorType.BGRA8888,TSkAlphaType.Unpremul),
+        @TilePixels[0], TileW*4, Tile.Left, Tile.Top) then
+        raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
+      for Y := 0 to TileH-1 do
+        for X := 0 to TileW-1 do
+        begin
+          I := (Tile.Top+Y)*W+Tile.Left+X;
+          FBefore[I] := TilePixels[Y*TileW+X];
+          FBits[I] := (FBefore[I] and $FFFFFF) or $7F000000;
+        end;
+    end
+    else
+    begin
+      if not FTarget.FBacking.ReadPixels(TSkImageInfo.Create(W, H, TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(FBefore), W * 4) then
+        raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
+      for I := 0 to High(FBefore) do
+      begin
+        if FAlphaBlend then
+        begin
+          A := FBefore[I] shr 24;
+          Value := A shl 24;
+          for J := 0 to 2 do
+            Value := Value or (((((FBefore[I] shr (J * 8)) and 255) * A + 127) div 255) shl (J * 8));
+          FBits[I] := Value;
+        end
+        else
+          FBits[I] := (FBefore[I] and $FFFFFF) or $7F000000;
       end;
     end;
   end;
@@ -772,7 +807,7 @@ begin
         if I >= 0 then
           Break;
       end;
-    if I < 0 then
+    if (I < 0) and not FBeforeIsTile then
       for Candidate := 0 to High(FBefore) do
         if PixelChanged(Candidate) then
         begin
@@ -812,7 +847,7 @@ begin
     if not Painted then
       Exit;
   end;
-  Native := FForceNativeState or (P.SourceRecordType in [15, 62, 63, 64]) or (P.Kind = mpkImage) or (P.SourceRecordType in [71, 72, 73, 74]) or
+  Native := FForceNativeState or (FStrokeWidenFailed and P.Stroke.Visible) or (P.SourceRecordType in [15, 62, 63, 64]) or (P.Kind = mpkImage) or (P.SourceRecordType in [71, 72, 73, 74]) or
     ((P.Kind = mpkText) and ((FTextPath = nil) or ((P.TextStyle.BkMode = OPAQUE) and (FTextBackgroundPath = nil)))) or
     (P.Fill.Visible and ((P.Fill.Kind <> mfkSolid) or (P.Fill.RasterOperation2 <> R2_COPYPEN))) or
     (P.Stroke.Visible and ((P.Stroke.Brush.Kind <> mbdkNone) or (P.Stroke.BrushStyle <> BS_SOLID) or (P.Stroke.Style and $F = PS_USERSTYLE) or (P.Stroke.Style and $F = PS_INSIDEFRAME) or

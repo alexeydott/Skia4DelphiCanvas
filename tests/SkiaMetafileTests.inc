@@ -1,3 +1,13 @@
+type
+  TReviewLimitProbe = class
+    TextCallbacks:Integer;
+    procedure RecordReady(Sender:TObject;DC:HDC;Table:Pointer;RecordData:PEnhMetaRecord;Objects:Integer);
+  end;
+procedure TReviewLimitProbe.RecordReady(Sender:TObject;DC:HDC;Table:Pointer;RecordData:PEnhMetaRecord;Objects:Integer);
+begin
+  if RecordData.iType in [83,84,96,97,108] then Inc(TextCallbacks);
+end;
+
 function TestEmfAlphaBlend(Dest:HDC;X,Y,W,H:Integer;Source:HDC;SX,SY,SW,SH:Integer;Blend:Cardinal):BOOL;stdcall;
   external 'msimg32.dll' name 'AlphaBlend';
 
@@ -152,6 +162,321 @@ begin
   except Result.Free;raise;end;
 end;
 
+function ReviewSetWorld(DC:HDC;Transform:Pointer):BOOL;stdcall;
+  external 'gdi32.dll' name 'SetWorldTransform';
+procedure TestReviewSetPixelBatch;
+var Meta:TMetafile;Writer:TMetafileCanvas;Canvas:TSkiaBitmapCanvas;Reference:TBitmap;
+  M:TMatrix;XF:TXForm;Native:HENHMETAFILE;DC:HDC;Image:ISkImage;Pixels:TArray<TAlphaColor>;
+  I,X,Y,Mode,Bad,Ink:Integer;Color:Cardinal;Header:TEnhMetaHeader;Started,Elapsed:UInt64;
+begin
+  Meta:=TMetafile.Create;Reference:=TBitmap.Create;
+  try
+    Meta.Width:=4096;Meta.Height:=4096;Writer:=TMetafileCanvas.Create(Meta,0);
+    try
+      for I:=0 to 9999 do
+      begin
+        if Odd(I) then Color:=ColorToRGB(clRed) else Color:=ColorToRGB(clBlue);
+        SetPixel(Writer.Handle,50+(I mod 100),50+(I div 100),Color);
+      end;
+    finally Writer.Free;end;
+    FillChar(Header,SizeOf(Header),0);
+    Check((GetEnhMetaFileHeader(Meta.Handle,SizeOf(Header),@Header)<>0) and (Header.nRecords>=10002),
+      'Review: 10000 SETPIXELV records generated');
+    Reference.PixelFormat:=pf32bit;Reference.SetSize(4096,4096);
+    SetLength(Pixels,400*400);
+    for Mode:=0 to 1 do
+    begin
+      Canvas:=TSkiaBitmapCanvas.Create(4096,4096);
+      try
+        M:=TMatrix.Identity;
+        if Mode=1 then begin M.M11:=0.75;M.M12:=0.25;M.M21:=0.125;M.M31:=160;M.M32:=40;end;
+        Canvas.SkCanvas.Clear($FFFFFFFF);Canvas.SetWorldTransform(M);
+        Started:=GetTickCount64;Canvas.StretchDraw(Rect(0,0,4096,4096),Meta);Elapsed:=GetTickCount64-Started;
+        Writeln(Format('EMF SETPIXELV: 10000 records / 4096x4096 / transform %d / %d ms',[Mode,Elapsed]));
+        Reference.Canvas.Brush.Color:=clWhite;Reference.Canvas.FillRect(Rect(0,0,4096,4096));
+        DC:=Reference.Canvas.Handle;SetGraphicsMode(DC,GM_ADVANCED);
+        XF.eM11:=M.M11;XF.eM12:=M.M12;XF.eM21:=M.M21;XF.eM22:=M.M22;XF.eDx:=M.M31;XF.eDy:=M.M32;
+        ReviewSetWorld(DC,@XF);Native:=CopyEnhMetaFile(Meta.Handle,nil);
+        try Check(PlayEnhMetaFile(DC,Native,Rect(0,0,4095,4095)),'Review: native SETPIXELV batch reference');
+        finally DeleteEnhMetaFile(Native);end;
+        XF.eM11:=1;XF.eM12:=0;XF.eM21:=0;XF.eM22:=1;XF.eDx:=0;XF.eDy:=0;ReviewSetWorld(DC,@XF);
+        Image:=Canvas.Snapshot;
+        Check(Image.ReadPixels(TSkImageInfo.Create(400,400,TSkColorType.BGRA8888,TSkAlphaType.Unpremul),Pointer(Pixels),400*4),
+          'Review: SETPIXELV batch pixels readable');
+        Bad:=0;Ink:=0;
+        for Y:=0 to 399 do for X:=0 to 399 do
+        begin
+          Color:=ColorToAlphaColor(TColor(GetPixel(DC,X,Y))) and $FFFFFF;
+          if (Pixels[Y*400+X] and $FFFFFF)<>Color then Inc(Bad);
+          if Color<>$FFFFFF then Inc(Ink);
+        end;
+        Check((Bad=0) and (Ink>1000),Format('Review: tiled SETPIXELV batch exactly matches native GDI (bad %d, ink %d)',[Bad,Ink]));
+      finally Image:=nil;Canvas.Free;end;
+    end;
+  finally Reference.Free;Meta.Free;end;
+end;
+
+function ReviewDrawText(DC:HDC;Text:PWideChar;Count:Integer;Bounds:PRect;Flags:UINT):Integer;stdcall;
+  external 'user32.dll' name 'DrawTextW';
+procedure TestReviewOpaqueText;
+var Bitmap:TBitmap;Canvas:TSkiaBitmapCanvas;R:TRect;Text:string;
+begin
+  Bitmap:=TBitmap.Create;Canvas:=TSkiaBitmapCanvas.Create(64,48);
+  try
+    Bitmap.PixelFormat:=pf32bit;Bitmap.SetSize(64,48);
+    Bitmap.Canvas.Brush.Color:=clWhite;Bitmap.Canvas.FillRect(Rect(0,0,64,48));
+    Bitmap.Canvas.Font.Name:='Arial';Bitmap.Canvas.Font.Height:=-16;
+    SelectObject(Bitmap.Canvas.Handle,Bitmap.Canvas.Font.Handle);
+    SetBkMode(Bitmap.Canvas.Handle,OPAQUE);SetBkColor(Bitmap.Canvas.Handle,ColorToRGB(clRed));
+    SetTextColor(Bitmap.Canvas.Handle,0);R:=Rect(0,0,64,48);
+    ReviewDrawText(Bitmap.Canvas.Handle,'A',1,@R,DT_SINGLELINE);
+    Canvas.Brush.Color:=clWhite;Canvas.FillRect(Rect(0,0,64,48));
+    Canvas.Brush.Color:=clRed;Canvas.Font.Assign(Bitmap.Canvas.Font);
+    R:=Rect(0,0,64,48);Text:='A';Canvas.TextRect(R,Text,[tfSingleLine]);
+    Check(Bitmap.Canvas.Pixels[60,44]=clWhite,'Review: GDI opaque text leaves unused layout area unchanged');
+    Check(Canvas.Pixels[60,44]=clWhite,'Review: Skia opaque text agrees with GDI outside character cells');
+  finally Canvas.Free;Bitmap.Free;end;
+end;
+
+function ReviewLPtoDP(DC:HDC;Points:Pointer;Count:Integer):BOOL;stdcall;
+  external 'gdi32.dll' name 'LPtoDP';
+procedure TestReviewIsotropic;
+var Meta:TMetafile;Writer:TMetafileCanvas;Parser:TMetafileParser;P:TPoint;I,SignY,Order:Integer;Found:Boolean;
+begin
+  for SignY:=-1 to 1 do if SignY<>0 then
+  for Order:=0 to 3 do
+  begin
+    Meta:=TMetafile.Create;Parser:=TMetafileParser.Create;
+    try
+      Meta.Width:=32;Meta.Height:=32;Writer:=TMetafileCanvas.Create(Meta,0);
+      try
+        SetMapMode(Writer.Handle,MM_ISOTROPIC);
+        if Order=1 then
+        begin
+          SetViewportExtEx(Writer.Handle,200,SignY*100,nil);
+          SetWindowExtEx(Writer.Handle,100,100,nil);
+        end
+        else
+        begin
+          SetWindowExtEx(Writer.Handle,100,100,nil);
+          SetViewportExtEx(Writer.Handle,200,SignY*100,nil);
+        end;
+        if Order=2 then ScaleWindowExtEx(Writer.Handle,2,1,1,1,nil);
+        if Order=3 then ScaleViewportExtEx(Writer.Handle,1,1,2,1,nil);
+        P:=Point(10,10);Check(ReviewLPtoDP(Writer.Handle,@P,1),'Review: native isotropic reference');
+        Writer.MoveTo(0,0);Writer.LineTo(10,10);
+      finally Writer.Free;end;
+      Parser.StorePrimitives:=True;
+      Check(Parser.LoadFromMetafile(Meta),'Review: isotropic metafile parses');Found:=False;
+      for I:=0 to Parser.PrimitiveCount-1 do
+        if Parser.PrimitiveByIndex(I).SourceRecordType=54 then
+        begin
+          Found:=True;
+          Check(Abs((Parser.PrimitiveByIndex(I).Bounds.Right-Parser.PrimitiveByIndex(I).Bounds.Left)-Abs(P.X))<0.001,
+            Format('Review: isotropic X scale agrees with GDI (parser %.3f, native %d)',[Parser.PrimitiveByIndex(I).Bounds.Right-Parser.PrimitiveByIndex(I).Bounds.Left,Abs(P.X)]));
+          Check(Abs((Parser.PrimitiveByIndex(I).Bounds.Bottom-Parser.PrimitiveByIndex(I).Bounds.Top)-Abs(P.Y))<0.001,
+            Format('Review: isotropic Y scale agrees with GDI (parser %.3f, native %d)',[Parser.PrimitiveByIndex(I).Bounds.Bottom-Parser.PrimitiveByIndex(I).Bounds.Top,Abs(P.Y)]));
+          Check(Abs(Parser.PrimitiveByIndex(I).Points[High(Parser.PrimitiveByIndex(I).Points)].X-P.X)<0.001,
+            'Review: isotropic X orientation agrees with GDI');
+          Check(Abs(Parser.PrimitiveByIndex(I).Points[High(Parser.PrimitiveByIndex(I).Points)].Y-P.Y)<0.001,
+            'Review: isotropic Y orientation agrees with GDI');
+        end;
+      Check(Found,'Review: isotropic line emitted');
+    finally Parser.Free;Meta.Free;end;
+  end;
+end;
+
+procedure TestReviewInputBounds;
+var Primitive:TMetafilePrimitive; Meta:TMetafile; Parser:TMetafileParser;
+  Records:TBytes; Kind,Size:Integer; Accepted:Boolean; Limits:TMetafileLimits; I,CaseIndex:Integer; Probe:TReviewLimitProbe; FileName:string; Stream:TFileStream;
+begin
+  Primitive:=TMetafilePrimitive.Create;
+  try
+    SetLength(Primitive.Points,2);SetLength(Primitive.PointCounts,3);
+    Primitive.PointCounts[0]:=High(Integer);Primitive.PointCounts[1]:=High(Integer);
+    Primitive.PointCounts[2]:=2;
+    Check(Length(Primitive.SubPoints(2))=0,'Review: overflowing subpath prefix is rejected');
+    Primitive.PointCounts[0]:=1;Primitive.PointCounts[1]:=High(Integer);
+    Check(Length(Primitive.SubPoints(1))=0,'Review: overflowing subpath end is rejected');
+    Primitive.PointCounts[1]:=1;
+    Check(Length(Primitive.SubPoints(1))=1,'Review: valid subpath remains available');
+  finally Primitive.Free;end;
+  SetLength(Records,24);FillChar(Records[0],Length(Records),0);
+  for Kind:=0 to 2 do begin PCardinal(@Records[Kind*8])^:=33;PCardinal(@Records[Kind*8+4])^:=8;end;
+  Meta:=MakeEmfWithRecords(Records,3);Parser:=TMetafileParser.Create;
+  try
+    Limits:=Parser.Limits;Limits.MaxSaveDepth:=2;Parser.Limits:=Limits;
+    Check(not Parser.LoadFromMetafile(Meta),'Review: SaveDC depth budget rejects excessive nesting');
+    Check(Pos('depth limit',Parser.LastError)>0,'Review: SaveDC budget failure identifies resource limit');
+    Limits.MaxSaveDepth:=3;Parser.Limits:=Limits;
+    Check(Parser.LoadFromMetafile(Meta),'Review: increased SaveDC budget permits valid nesting');
+    Limits.MaxTotalBytes:=88;Parser.Limits:=Limits;
+    Check(not Parser.LoadFromMetafile(Meta),'Review: total input byte budget rejects oversized metafile');
+    Check(Pos('total record byte limit',Parser.LastError)>0,'Review: total input byte budget reports error');
+    Limits.MaxTotalBytes:=512*1024*1024;Parser.Limits:=Limits;
+    Check(Parser.LoadFromMetafile(Meta),'Review: input byte accounting resets on the next load');
+    Limits.MaxTotalPoints:=4;Parser.Limits:=Limits;
+    Check(not Parser.LoadFromMetafile(Meta),'Review: total generated point budget enforced');
+    Check(Pos('generated point limit',Parser.LastError)>0,'Review: generated point budget reports error');
+    Limits.MaxTotalPoints:=100;Parser.Limits:=Limits;
+    Check(Parser.LoadFromMetafile(Meta),'Review: generated point accounting resets on the next load');
+  finally Parser.Free;Meta.Free;end;
+  FileName:=ExtractFilePath(ParamStr(0))+'review-byte-limit.emf';
+  Stream:=TFileStream.Create(FileName,fmCreate);
+  try Stream.Size:=256;finally Stream.Free;end;
+  Parser:=TMetafileParser.Create;
+  try
+    Limits:=Parser.Limits;Limits.MaxTotalBytes:=88;Parser.Limits:=Limits;
+    Check(not Parser.LoadFromFile(FileName),'Review: file byte limit enforced before native loading');
+    Check(Pos('before loading',Parser.LastError)>0,'Review: oversized file reports input byte limit');
+    Limits.MaxTotalBytes:=512*1024*1024;Parser.Limits:=Limits;
+    Meta:=MakeEmfWithRecords(Records,3);
+    try
+      Meta.SaveToFile(FileName);Parser.StorePrimitives:=True;
+      Check(Parser.LoadFromFile(FileName) and (Parser.PrimitiveCount>0),
+        'Review: bounded native file loader accepts valid metafiles');
+    finally Meta.Free;end;
+  finally Parser.Free;SysUtils.DeleteFile(FileName);end;
+  SetLength(Records,80);FillChar(Records[0],Length(Records),0);
+  PCardinal(@Records[0])^:=84;PCardinal(@Records[4])^:=80;
+  PCardinal(@Records[44])^:=$80000000;
+  Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;Probe:=TReviewLimitProbe.Create;
+  try
+    Parser.OnRecord:=Probe.RecordReady;
+    Check(not Parser.LoadFromMetafile(Meta),'Review: hostile text character count rejected before allocation');
+    Check(Pos('text length limit',Parser.LastError)>0,'Review: hostile text reports length limit');
+    Check(Probe.TextCallbacks=0,'Review: text length checked before native replay callbacks');
+  finally Probe.Free;Parser.Free;Meta.Free;end;
+  SetLength(Records,32);FillChar(Records[0],Length(Records),0);
+  PCardinal(@Records[0])^:=35;PCardinal(@Records[4])^:=32;
+  PCardinal(@Records[8])^:=$7FC00000;
+  Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;
+  try
+    Check(not Parser.LoadFromMetafile(Meta),'Review: non-finite world transform rejected');
+    Check(Pos('Non-finite',Parser.LastError)>0,'Review: invalid world transform reports error');
+  finally Parser.Free;Meta.Free;end;
+  SetLength(Records,24);FillChar(Records[0],Length(Records),0);
+  PCardinal(@Records[0])^:=33;PCardinal(@Records[4])^:=8;
+  PCardinal(@Records[8])^:=34;PCardinal(@Records[12])^:=12;PCardinal(@Records[16])^:=$80000000;
+  SetLength(Records,20);
+  Meta:=MakeEmfWithRecords(Records,2);Parser:=TMetafileParser.Create;
+  try Check(Parser.LoadFromMetafile(Meta),'Review: RestoreDC Low(Integer) does not overflow');
+  finally Parser.Free;Meta.Free;end;
+  SetLength(Records,80);FillChar(Records[0],Length(Records),0);
+  PCardinal(@Records[0])^:=59;PCardinal(@Records[4])^:=8;
+  PCardinal(@Records[8])^:=27;PCardinal(@Records[12])^:=16;
+  PCardinal(@Records[24])^:=54;PCardinal(@Records[28])^:=16;
+  PCardinal(@Records[32])^:=10;PCardinal(@Records[36])^:=10;
+  PCardinal(@Records[40])^:=60;PCardinal(@Records[44])^:=8;
+  PCardinal(@Records[48])^:=61;PCardinal(@Records[52])^:=8;
+  PCardinal(@Records[56])^:=64;PCardinal(@Records[60])^:=24;
+  Meta:=MakeEmfWithRecords(Records,6);Parser:=TMetafileParser.Create;
+  try
+    Parser.StorePrimitives:=True;
+    Check(Parser.LoadFromMetafile(Meta),'Review: completed path remains parseable');
+    Accepted:=False;
+    for I:=0 to Parser.PrimitiveCount-1 do
+      if Parser.PrimitiveByIndex(I).SourceRecordType=64 then
+        Accepted:=Length(Parser.PrimitiveByIndex(I).Points)=2;
+    Check(Accepted,'Review: CLOSEFIGURE outside path bracket leaves pending open path unchanged');
+  finally Parser.Free;Meta.Free;end;
+  for CaseIndex:=0 to 1 do
+  begin
+    if CaseIndex=0 then Size:=36 else Size:=80;
+    SetLength(Records,Size);FillChar(Records[0],Length(Records),0);
+    PCardinal(@Records[4])^:=Size;
+    if CaseIndex=0 then
+    begin PCardinal(@Records[0])^:=108;PCardinal(@Records[16])^:=$80000000;end
+    else
+    begin PCardinal(@Records[0])^:=97;PCardinal(@Records[36])^:=1;PCardinal(@Records[48])^:=$80000000;end;
+    Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;Probe:=TReviewLimitProbe.Create;
+    try
+      Parser.OnRecord:=Probe.RecordReady;
+      Check(not Parser.LoadFromMetafile(Meta),'Review: alternate text record checks length before allocation '+IntToStr(CaseIndex));
+      Check(Pos('text length limit',Parser.LastError)>0,'Review: alternate text record reports length limit '+IntToStr(CaseIndex));
+      Check(Probe.TextCallbacks=0,'Review: alternate text limit precedes native replay callback '+IntToStr(CaseIndex));
+    finally Probe.Free;Parser.Free;Meta.Free;end;
+  end;
+  SetLength(Records,84);FillChar(Records[0],Length(Records),0);
+  PCardinal(@Records[0])^:=17;PCardinal(@Records[4])^:=12;PCardinal(@Records[8])^:=MM_ISOTROPIC;
+  PCardinal(@Records[12])^:=9;PCardinal(@Records[16])^:=16;PCardinal(@Records[20])^:=100;PCardinal(@Records[24])^:=100;
+  PCardinal(@Records[28])^:=11;PCardinal(@Records[32])^:=16;PCardinal(@Records[36])^:=100;PCardinal(@Records[40])^:=100;
+  PCardinal(@Records[44])^:=32;PCardinal(@Records[48])^:=24;
+  PCardinal(@Records[56])^:=1;PCardinal(@Records[60])^:=1;PCardinal(@Records[64])^:=1;
+  PCardinal(@Records[68])^:=54;PCardinal(@Records[72])^:=16;PCardinal(@Records[76])^:=10;PCardinal(@Records[80])^:=10;
+  Meta:=MakeEmfWithRecords(Records,5);Parser:=TMetafileParser.Create;
+  try
+    Parser.StorePrimitives:=True;
+    Check(Parser.LoadFromMetafile(Meta),'Review: zero scale numerator does not create a zero divisor');
+    Accepted:=False;
+    for I:=0 to Parser.PrimitiveCount-1 do
+      if Parser.PrimitiveByIndex(I).SourceRecordType=54 then
+        Accepted:=(Abs(Parser.PrimitiveByIndex(I).Bounds.Right-10)<0.001) and
+          (Abs(Parser.PrimitiveByIndex(I).Bounds.Bottom-10)<0.001);
+    Check(Accepted,'Review: invalid scale operation preserves preceding mapping');
+  finally Parser.Free;Meta.Free;end;
+  for CaseIndex:=0 to 3 do
+  begin
+    SetLength(Records,76);FillChar(Records[0],Length(Records),0);
+    PCardinal(@Records[0])^:=118;PCardinal(@Records[4])^:=76;
+    PCardinal(@Records[24])^:=2;PCardinal(@Records[28])^:=1;
+    PCardinal(@Records[52])^:=8;PCardinal(@Records[56])^:=8;
+    PCardinal(@Records[68])^:=0;PCardinal(@Records[72])^:=1;
+    case CaseIndex of
+      1:PCardinal(@Records[72])^:=2;
+      2:PCardinal(@Records[32])^:=3;
+      3:PCardinal(@Records[28])^:=$7FFFFFFF;
+    end;
+    Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;
+    try
+      Parser.StorePrimitives:=True;
+      Accepted:=Parser.LoadFromMetafile(Meta);
+      if CaseIndex=3 then
+        Check(not Accepted,'Review: huge gradient mesh count rejected before allocation')
+      else
+      begin
+        Check(Accepted,'Review: gradient record parsed safely '+IntToStr(CaseIndex));
+        Accepted:=False;
+        for I:=0 to Parser.PrimitiveCount-1 do
+          if Parser.PrimitiveByIndex(I).SourceRecordType=118 then Accepted:=True;
+        Check(Accepted=(CaseIndex=0),'Review: only valid gradient mesh is published '+IntToStr(CaseIndex));
+      end;
+    finally Parser.Free;Meta.Free;end;
+  end;
+  for CaseIndex:=0 to 2 do
+  begin
+    SetLength(Records,80);FillChar(Records[0],Length(Records),0);
+    PCardinal(@Records[0])^:=71;PCardinal(@Records[4])^:=80;
+    PCardinal(@Records[24])^:=48;PCardinal(@Records[28])^:=$80000000;
+    PCardinal(@Records[32])^:=32;PCardinal(@Records[36])^:=1;
+    PCardinal(@Records[40])^:=1;PCardinal(@Records[44])^:=16;
+    PCardinal(@Records[72])^:=8;PCardinal(@Records[76])^:=8;
+    if CaseIndex=1 then PCardinal(@Records[40])^:=$10000000;
+    if CaseIndex=2 then PCardinal(@Records[44])^:=0;
+    Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;
+    try
+      Parser.StorePrimitives:=True;
+      Check(Parser.LoadFromMetafile(Meta),'Review: region count and size checked safely '+IntToStr(CaseIndex));
+      Accepted:=False;
+      for I:=0 to Parser.PrimitiveCount-1 do
+        if Parser.PrimitiveByIndex(I).SourceRecordType=71 then Accepted:=True;
+      Check(Accepted=(CaseIndex=0),'Review: only bounded consistent region is published '+IntToStr(CaseIndex));
+    finally Parser.Free;Meta.Free;end;
+  end;
+  for Kind:=71 to 74 do
+  begin
+    if Kind=71 then Size:=32 else if Kind=72 then Size:=40 else Size:=28;
+    SetLength(Records,Size-4);FillChar(Records[0],Length(Records),0);
+    PCardinal(@Records[0])^:=Kind;PCardinal(@Records[4])^:=Length(Records);
+    Meta:=MakeEmfWithRecords(Records);Parser:=TMetafileParser.Create;
+    try
+      Accepted:=Parser.LoadFromMetafile(Meta);
+      Check(not Accepted,'Review: truncated region prefix rejected '+IntToStr(Kind));
+      Check(Parser.LastError<>'','Review: truncated region reports an error '+IntToStr(Kind));
+    finally Parser.Free;Meta.Free;end;
+  end;
+end;
+
 procedure TestEmfInvalidOpenPath;
 var Records:TBytes;Meta:TMetafile;Canvas:TSkiaBitmapCanvas;Raised:Boolean;
 begin
@@ -241,6 +566,10 @@ begin
   TestEmfRecoveryMetadata;
   TestEmfRecoveryHandles;
   TestEmfDIBOrigins;
+  TestReviewInputBounds;
+  TestReviewSetPixelBatch;
+  TestReviewOpaqueText;
+  TestReviewIsotropic;
   TestEmfInvalidOpenPath;
   Root:=ExpandFileName(ExtractFilePath(ParamStr(0))+'..\..\fixtures\emf\');
   BaseOutput:=ExtractFilePath(ParamStr(0))+'emf\';

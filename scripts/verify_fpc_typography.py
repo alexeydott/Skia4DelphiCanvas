@@ -6,14 +6,14 @@ import argparse
 from pathlib import Path
 from PIL import Image
 from pypdf import PdfReader
-from pypdf.generic import ContentStream
+from pdf_content import pdf_operators
 from xml.etree import ElementTree as ET
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('directory',nargs='?',type=Path,default=Path(__file__).resolve().parent.parent/'demo/build/fpc-native-win64')
 root=parser.parse_args().directory
 pdf=PdfReader(root/'skia_demo.pdf',strict=True)
 for i,page in enumerate(pdf.pages,1):
- ops=[op for _,op in ContentStream(page.get_contents(),pdf).operations]
+ ops=list(pdf_operators(page,pdf))
  assert b'BT' not in ops and b'Tj' not in ops and b'TJ' not in ops, (i,'font text objects')
  assert ops.count(b'm')>100 and ops.count(b'c')>100, (i,'missing vector contours')
  print(f'PDF page {i}: {ops.count(b"m")} contours, {ops.count(b"c")} cubic segments, no text operators')

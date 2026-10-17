@@ -62,7 +62,8 @@ var
   Run, Swap: TRun;
   Base: Cardinal;
   I, J, N, First, OldCount: Integer;
-  RunText: UnicodeString;
+  RunText, Scalar: UnicodeString;
+  RunLength: Integer;
   Buffer: Pointer;
   Count, PositionCount: Cardinal;
   Infos: PHbGlyphInfo;
@@ -120,9 +121,15 @@ begin
       end;
   for Run in Runs do
   begin
-    RunText := '';
+    SetLength(RunText, Math.Min(Int64(Run.Count) * 2, Int64(Length(Text))));
+    RunLength := 0;
     for I := Run.First to Run.First + Run.Count - 1 do
-      RunText := RunText + TSkiaUnicode.ScalarText(Values[I]);
+    begin
+      Scalar := TSkiaUnicode.ScalarText(Values[I]);
+      Move(Scalar[1], RunText[RunLength+1], Length(Scalar) * SizeOf(WideChar));
+      Inc(RunLength, Length(Scalar));
+    end;
+    SetLength(RunText, RunLength);
     Buffer := hb_buffer_create;
     try
       hb_buffer_add_utf16(Buffer, PWideChar(RunText), Length(RunText), 0, Length(RunText));
@@ -178,6 +185,8 @@ begin
     if Text <> '' then
     begin
       Charset := FcCharSetCreate;
+      if Charset = nil then
+        Exit;
       try
         for Point in TSkiaUnicode.CodePoints(Text) do
           if not TSkiaUnicode.IsDefaultIgnorable(Point) then
@@ -235,6 +244,8 @@ begin
   try
     FNativeFont := nil;
     FNativeShaped := False;
+    FEmSquare := 0;
+    FEmSquareKey := '';
   finally
     Unlock;
   end;
@@ -256,21 +267,33 @@ var
   Index: Integer;
   Blob, Face: Pointer;
 begin
-  Result := 0;
-  if not NativeFontFile(LF, '', FileName, Index) then
-    Exit;
-  Blob := hb_blob_create_from_file_or_fail(PAnsiChar(FileName));
-  if Blob = nil then
-    Exit;
+  Lock;
   try
-    Face := hb_face_create(Blob, Index);
+    if (FEmSquareKey = FontKey) and (FEmSquare > 0) then
+      Exit(FEmSquare);
+    Result := 0;
+    if not NativeFontFile(LF, '', FileName, Index) then
+      Exit;
+    Blob := hb_blob_create_from_file_or_fail(PAnsiChar(FileName));
+    if Blob = nil then
+      Exit;
     try
-      Result := hb_face_get_upem(Face);
+      Face := hb_face_create(Blob, Index);
+      try
+        Result := hb_face_get_upem(Face);
+      finally
+        hb_face_destroy(Face);
+      end;
     finally
-      hb_face_destroy(Face);
+      hb_blob_destroy(Blob);
+    end;
+    if Result > 0 then
+    begin
+      FEmSquare := Result;
+      FEmSquareKey := FontKey;
     end;
   finally
-    hb_blob_destroy(Blob);
+    Unlock;
   end;
 end;
 
@@ -290,6 +313,8 @@ begin
     if FNativeFont = nil then
       Exit;
     Widths := FNativeFont.GetWidths(TArray<Word>.Create(GlyphIndex));
+    if Length(Widths) <> 1 then
+      Exit;
     Advance := Widths[0];
     Result := FNativeFont.GetPath(GlyphIndex);
     if Result <> nil then

@@ -1,0 +1,1 @@
+A MOVETO mutation makes a one-million-unit geometric dashed line. Reject excessive dash construction work before native GDI playback.

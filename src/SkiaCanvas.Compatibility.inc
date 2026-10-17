@@ -56,11 +56,28 @@ begin
   Result := nil;
   if Image = nil then
     Exit;
+  if (Image.Width <= 0) or (Image.Height <= 0) or
+    (Int64(Image.Width) * Image.Height > High(Integer) div SizeOf(TAlphaColor)) then
+    raise ESkiaCanvasError.Create('Image dimensions exceed the pixel buffer limit');
   SetLength(Result, Image.Width * Image.Height);
 
   if not Image.ReadPixels(TSkImageInfo.Create(Image.Width, Image.Height, TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(Result), Image.Width * 4) then
     raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
 
+end;
+
+function CompatReadSurfaceRect(const Surface: ISkSurface; const Bounds: TRect): TArray<TAlphaColor>;
+var
+  W,H: Integer;
+begin
+  W := Bounds.Right-Bounds.Left;
+  H := Bounds.Bottom-Bounds.Top;
+  if (W <= 0) or (H <= 0) or (Int64(W)*H > High(Integer) div SizeOf(TAlphaColor)) then
+    raise ESkiaCanvasError.Create('Invalid raster readback bounds');
+  SetLength(Result,W*H);
+  if not Surface.ReadPixels(TSkImageInfo.Create(W,H,TSkColorType.BGRA8888,TSkAlphaType.Unpremul),
+    Pointer(Result),W*SizeOf(TAlphaColor),Bounds.Left,Bounds.Top) then
+    raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
 end;
 
 function CompatRop(Table: Byte; P, S, D: Cardinal): Cardinal;
@@ -150,7 +167,7 @@ begin
   Inverse.M22 := Src.FMatrix.M11 / Det;
   Inverse.M31 := (Src.FMatrix.M32 * Src.FMatrix.M21 - Src.FMatrix.M31 * Src.FMatrix.M22) / Det - L;
   Inverse.M32 := (Src.FMatrix.M31 * Src.FMatrix.M12 - Src.FMatrix.M32 * Src.FMatrix.M11) / Det - T;
-  Surface := TSkSurface.MakeRaster(W, H);
+  Surface := MakeRasterSurface(W, H);
   Surface.GetCanvas.SetMatrix(Inverse);
   Image := GetSrcImage(Src);
   Surface.GetCanvas.DrawImage(Image, 0, 0);
@@ -167,7 +184,7 @@ begin
   try
     { Stable native handles are independent of temporary operation recorders. }
     for C in GCompatCanvases do
-      if C.FNativeCanvasHandle = FNativeCanvasHandle then
+      if (FNativeCanvasHandle <> 0) and (C.FNativeCanvasHandle = FNativeCanvasHandle) then
       begin
         FCanvasSynchronization := C.FCanvasSynchronization;
         FDeviceWidth := C.FDeviceWidth;
@@ -213,7 +230,11 @@ begin
         FDeviceWidth := Math.Max(1, R.Right);
         FDeviceHeight := Math.Max(1, R.Bottom);
       end;
-      FBacking := TSkSurface.MakeRaster(FDeviceWidth, FDeviceHeight);
+      if Int64(FDeviceWidth) * FDeviceHeight > High(Integer) div SizeOf(TAlphaColor) then
+        raise ESkiaCanvasError.Create('Canvas dimensions exceed the pixel buffer limit');
+      FBacking := MakeRasterSurface(FDeviceWidth, FDeviceHeight);
+      if FBacking = nil then
+        raise ESkiaCanvasError.Create('Cannot allocate canvas backing surface');
     end;
     GCompatCanvases.Add(Self);
   finally
@@ -253,6 +274,43 @@ begin
   Target.SetMatrix(FMatrix);
 end;
 
+procedure TSkiaCanvas.SetOperationBounds(const Bounds: TRectF; Margin: Single);
+var
+  Corners: array[0..3] of TPointF;
+  MinX, MinY, MaxX, MaxY: Double;
+  R: TRect;
+  Logical: TRectF;
+  I: Integer;
+begin
+  if (FOperationDepth <> 1) or FOperationBoundsBlocked then
+    Exit;
+  Logical := RectF(Math.Min(Bounds.Left,Bounds.Right)-Margin, Math.Min(Bounds.Top,Bounds.Bottom)-Margin,
+    Math.Max(Bounds.Left,Bounds.Right)+Margin, Math.Max(Bounds.Top,Bounds.Bottom)+Margin);
+  Corners[0] := TransformCanvasPoint(PointF(Logical.Left, Logical.Top), FMatrix);
+  Corners[1] := TransformCanvasPoint(PointF(Logical.Right, Logical.Top), FMatrix);
+  Corners[2] := TransformCanvasPoint(PointF(Logical.Right, Logical.Bottom), FMatrix);
+  Corners[3] := TransformCanvasPoint(PointF(Logical.Left, Logical.Bottom), FMatrix);
+  MinX := Corners[0].X; MaxX := MinX;
+  MinY := Corners[0].Y; MaxY := MinY;
+  for I := 0 to 3 do
+  begin
+    if IsNan(Corners[I].X) or IsInfinite(Corners[I].X) or IsNan(Corners[I].Y) or IsInfinite(Corners[I].Y) then
+      Exit;
+    MinX := Math.Min(MinX, Corners[I].X); MaxX := Math.Max(MaxX, Corners[I].X);
+    MinY := Math.Min(MinY, Corners[I].Y); MaxY := Math.Max(MaxY, Corners[I].Y);
+  end;
+  R := Rect(Floor(Math.Max(0.0, Math.Min(Double(FDeviceWidth), MinX-1))),
+    Floor(Math.Max(0.0, Math.Min(Double(FDeviceHeight), MinY-1))),
+    Ceil(Math.Max(0.0, Math.Min(Double(FDeviceWidth), MaxX+1))),
+    Ceil(Math.Max(0.0, Math.Min(Double(FDeviceHeight), MaxY+1))));
+  if FOperationBounded then
+    FOperationBounds := Rect(Math.Min(FOperationBounds.Left,R.Left), Math.Min(FOperationBounds.Top,R.Top),
+      Math.Max(FOperationBounds.Right,R.Right), Math.Max(FOperationBounds.Bottom,R.Bottom))
+  else
+    FOperationBounds := R;
+  FOperationBounded := True;
+end;
+
 function TSkiaCanvas.BeginOperation(Kind: Integer): Boolean;
 begin
   Result := not FRecordingClosed;
@@ -260,7 +318,13 @@ begin
     Exit;
   Inc(FOperationDepth);
   if FOperationDepth <> 1 then
+  begin
+    FOperationBounded := False;
+    FOperationBoundsBlocked := True;
     Exit;
+  end;
+  FOperationBounded := False;
+  FOperationBoundsBlocked := False;
   FOperationKind := Kind;
   FOutputCanvas := FCanvas;
   FOperationRecorder := TSkPictureRecorder.Create;
@@ -289,7 +353,7 @@ var
   Paint: ISkPaint;
   Entry: TSkiaClipEntry;
 begin
-  Surface := TSkSurface.MakeRaster(FDeviceWidth, FDeviceHeight);
+  Surface := MakeRasterSurface(FDeviceWidth, FDeviceHeight);
   for Entry in FClips do
     Surface.GetCanvas.ClipPath(Entry.Path, Entry.Op, False);
   Paint := TSkPaint.Create;
@@ -299,9 +363,10 @@ begin
   Result := CompatReadImage(Surface.MakeImageSnapshot);
 end;
 
-procedure TSkiaCanvas.CommitPatch(const Pixels: TArray<TAlphaColor>; W, H: Integer);
+procedure TSkiaCanvas.CommitPatch(const Pixels: TArray<TAlphaColor>; W, H: Integer; BlendMode: TSkBlendMode; OriginX, OriginY: Integer);
 var
   Image: ISkImage;
+  Paint: ISkPaint;
   Cropped: TArray<TAlphaColor>;
   X, Y, L, T, R, B, CW: Integer;
 begin
@@ -325,15 +390,17 @@ begin
   for Y := T to B do
     Move(Pixels[Y * W + L], Cropped[(Y - T) * CW], CW * SizeOf(TAlphaColor));
   Image := CompatImage(Cropped, CW, B - T + 1);
+  Paint := TSkPaint.Create;
+  Paint.Blender := TSkBlender.MakeMode(BlendMode);
   FCanvas.Save;
   try
     FCanvas.ResetMatrix;
-    FCanvas.DrawImage(Image, L, T);
+    FCanvas.DrawImage(Image, OriginX + L, OriginY + T, Paint);
   finally
     FCanvas.Restore;
   end;
   if (FOperationDepth = 0) and not FBackingIsOutput then
-    FBacking.GetCanvas.DrawImage(Image, L, T);
+    FBacking.GetCanvas.DrawImage(Image, OriginX + L, OriginY + T, Paint);
 end;
 
 procedure TSkiaCanvas.EndOperation;
@@ -343,13 +410,24 @@ var
   Picture: ISkPicture;
   Source, Pattern: ISkSurface;
   Src, Dst, Pat, Patch: TArray<TAlphaColor>;
-  W, H, I: Integer;
+  W, H, I, J, Coverage, Channel, TileLeft, TileTop: Integer;
+  Tile: TRect;
+  RopColor, Value: Cardinal;
   Table: Byte;
   Rasterize: Boolean;
   Entry: TSkiaClipEntry;
   Paint: ISkPaint;
   A, B, C, D: TPoint;
   Bounds: TRectF;
+  function PatternAlpha(Index: Integer): Integer;
+  begin
+    { Hatch holes are zero RGB operands in GDI ROPs, not transparent image pixels. }
+    if (FBrush.Gradient = gkNone) and (FBrush.Pattern = nil) and
+      (FBrush.Style in [bsHorizontal,bsVertical,bsFDiagonal,bsBDiagonal,bsCross,bsDiagCross]) then
+      Result := FBrush.Alpha
+    else
+      Result := Pat[Index] shr 24;
+  end;
 begin
   Dec(FOperationDepth);
   if FOperationDepth <> 0 then
@@ -394,40 +472,106 @@ begin
     end;
     Exit;
   end;
-  Source := TSkSurface.MakeRaster(FDeviceWidth, FDeviceHeight);
-  Picture.Playback(Source.GetCanvas);
-  Src := CompatReadImage(Source.MakeImageSnapshot);
+  if FOperationBounded then
+    Tile := FOperationBounds
+  else
+    Tile := Rect(0, 0, FDeviceWidth, FDeviceHeight);
+  W := Tile.Right-Tile.Left;
+  H := Tile.Bottom-Tile.Top;
+  if (W <= 0) or (H <= 0) then
+    Exit;
+  TileLeft := Tile.Left;
+  TileTop := Tile.Top;
+  { Reuse a device-sized plane so shader sampling retains its global pixel phase. }
+  if FOperationSourceSurface = nil then
+    FOperationSourceSurface := MakeRasterSurface(FDeviceWidth, FDeviceHeight);
+  Source := FOperationSourceSurface;
+  Source.GetCanvas.Save;
+  try
+    Source.GetCanvas.ResetMatrix;
+    Source.GetCanvas.ClipRect(RectToRectF(Tile));
+    Source.GetCanvas.Clear(0);
+    Picture.Playback(Source.GetCanvas);
+  finally
+    Source.GetCanvas.Restore;
+  end;
+  Src := CompatReadSurfaceRect(Source,Tile);
   if (Table = $CC) and (FOperationKind <> 4) then
   begin
-    CommitPatch(Src, FDeviceWidth, FDeviceHeight);
+    CommitPatch(Src, W, H, TSkBlendMode.SrcOver, TileLeft, TileTop);
     Exit;
   end;
-  Dst := ReadDevicePixels(W, H);
-  Pattern := TSkSurface.MakeRaster(W, H);
-  Pattern.GetCanvas.SetMatrix(FMatrix);
-  A := DPToLP(Point(0, 0));
-  B := DPToLP(Point(W, 0));
-  C := DPToLP(Point(0, H));
-  D := DPToLP(Point(W, H));
-  Bounds := RectF(Math.Min(Math.Min(A.X, B.X), Math.Min(C.X, D.X)) - 2, Math.Min(Math.Min(A.Y, B.Y), Math.Min(C.Y, D.Y)) - 2, Math.Max(Math.Max(A.X, B.X), Math.Max(C.X, D.X)) + 2,
-    Math.Max(Math.Max(A.Y, B.Y), Math.Max(C.Y, D.Y)) + 2);
-  Paint := FResources.AcquireFillPaint(FBrush, Bounds);
-  if Paint <> nil then
-    Pattern.GetCanvas.DrawRect(Bounds, Paint);
-  Pat := CompatReadImage(Pattern.MakeImageSnapshot);
+  Dst := CompatReadSurfaceRect(FBacking,Tile);
+  if (FOperationKind = 4) or ((Table and $0F) <> ((Table shr 4) and $0F)) then
+  begin
+    if FOperationPatternSurface = nil then
+      FOperationPatternSurface := MakeRasterSurface(FDeviceWidth,FDeviceHeight);
+    Pattern := FOperationPatternSurface;
+    A := DPToLP(Point(0,0));
+    B := DPToLP(Point(FDeviceWidth,0));
+    C := DPToLP(Point(0,FDeviceHeight));
+    D := DPToLP(Point(FDeviceWidth,FDeviceHeight));
+    Bounds := RectF(Math.Min(Math.Min(A.X, B.X), Math.Min(C.X, D.X)) - 2, Math.Min(Math.Min(A.Y, B.Y), Math.Min(C.Y, D.Y)) - 2, Math.Max(Math.Max(A.X, B.X), Math.Max(C.X, D.X)) + 2,
+      Math.Max(Math.Max(A.Y, B.Y), Math.Max(C.Y, D.Y)) + 2);
+    Paint := FResources.AcquireFillPaint(FBrush, Bounds);
+    Pattern.GetCanvas.Save;
+    try
+      Pattern.GetCanvas.ResetMatrix;
+      Pattern.GetCanvas.ClipRect(RectToRectF(Tile));
+      Pattern.GetCanvas.Clear(0);
+      Pattern.GetCanvas.SetMatrix(FMatrix);
+      if Paint <> nil then
+        Pattern.GetCanvas.DrawRect(Bounds,Paint);
+    finally
+      Pattern.GetCanvas.Restore;
+    end;
+    Pat := CompatReadSurfaceRect(Pattern,Tile);
+  end
+  else
+    SetLength(Pat,W*H);
   if FOperationKind = 4 then
   begin
     for I := 0 to High(Src) do
       if (Src[I] and $FFFFFF) = FOperationKey then
         Src[I] := (Pat[I] and $FFFFFF) or (Cardinal(((Src[I] shr 24) * (Pat[I] shr 24) + 127) div 255) shl 24);
-    CommitPatch(Src, W, H);
+    CommitPatch(Src, W, H, TSkBlendMode.SrcOver, TileLeft, TileTop);
+    Exit;
+  end;
+  { A source-independent destination operation changes RGB while retaining destination alpha. }
+  if ((Table and $33) = ((Table shr 2) and $33)) and
+    ((Table and $55) <> ((Table shr 1) and $55)) then
+  begin
+    Patch := Copy(Dst);
+    for I := 0 to High(Patch) do
+    begin
+      Coverage := Src[I] shr 24;
+      if (Table and $0F) <> ((Table shr 4) and $0F) then
+        Coverage := (Coverage * PatternAlpha(I) + 127) div 255;
+      if Coverage = 0 then
+        Continue;
+      RopColor := CompatRop(Table, Pat[I], Src[I], Dst[I]);
+      Value := Dst[I] and $FF000000;
+      for J := 0 to 2 do
+      begin
+        Channel := (Integer((Dst[I] shr (J*8)) and 255) * (255-Coverage) +
+          Integer((RopColor shr (J*8)) and 255) * Coverage + 127) div 255;
+        Value := Value or (Cardinal(Channel) shl (J*8));
+      end;
+      Patch[I] := Value;
+    end;
+    CommitPatch(Patch, W, H, TSkBlendMode.Src, TileLeft, TileTop);
     Exit;
   end;
   SetLength(Patch, W * H);
   for I := 0 to High(Patch) do
     if Src[I] shr 24 <> 0 then
-      Patch[I] := (Src[I] and $FF000000) or CompatRop(Table, Pat[I], Src[I], Dst[I]);
-  CommitPatch(Patch, W, H);
+    begin
+      Coverage := Src[I] shr 24;
+      if (Table = $F0) or (Table = $0F) then
+        Coverage := (Coverage * PatternAlpha(I) + 127) div 255;
+      Patch[I] := (Cardinal(Coverage) shl 24) or CompatRop(Table, Pat[I], Src[I], Dst[I]);
+    end;
+  CommitPatch(Patch, W, H, TSkBlendMode.SrcOver, TileLeft, TileTop);
 end;
 
 procedure TSkiaCanvas.TransferImage(const Image: ISkImage; const Source, Dest: TRectF);
@@ -571,7 +715,7 @@ begin
       { Bitmap/color glyphs have no outline: preserve their pixels in vector outputs. }
       Font.GetMetrics(Metrics);
       Margin := Ceil(Font.Size * 2);
-      Surface := TSkSurface.MakeRaster(Math.Max(1, Ceil(Widths[I]) + Margin * 2), Math.Max(1, Ceil(Metrics.Descent - Metrics.Ascent) + Margin * 2));
+      Surface := MakeRasterSurface(Math.Max(1, Ceil(Widths[I]) + Margin * 2), Math.Max(1, Ceil(Metrics.Descent - Metrics.Ascent) + Margin * 2));
       Surface.GetCanvas.DrawGlyphs(TArray<Word>.Create(Glyphs[I]), TArray<TPointF>.Create(PointF(0, 0)), PointF(Margin, Margin - Metrics.Ascent), Font, Paint);
       FCanvas.DrawImage(Surface.MakeImageSnapshot, X - Margin, Baseline + Metrics.Ascent - Margin);
     end;
@@ -732,7 +876,7 @@ begin
       if FBrush.Style <> bsClear then
       begin
         Coverage := RenderCoverage(Text, Flags, True);
-        Pattern := TSkSurface.MakeRaster(FDeviceWidth, FDeviceHeight);
+        Pattern := MakeRasterSurface(FDeviceWidth, FDeviceHeight);
         Pattern.GetCanvas.SetMatrix(FMatrix);
         Paint := AcquireFillPaint(RectToRectF(Original));
         if Paint <> nil then

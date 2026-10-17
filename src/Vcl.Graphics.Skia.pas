@@ -362,6 +362,7 @@ type
     FGradientStartColor: TColor;
     FGradientEndColor: TColor;
     FPattern: TBitmap;
+    procedure PatternChanged(Sender: TObject);
     procedure SetAlpha(Value: Byte);
     procedure SetGradient(Value: TSkiaGradientKind);
     procedure SetGradientStartColor(Value: TColor);
@@ -714,14 +715,14 @@ type
   TSkiaGdiGlyphCache = class
   private
     FLock: SyncObjs.TCriticalSection;
+    FEmSquare: Integer;
+    FEmSquareKey: string;
 {$IFDEF MSWINDOWS}
     FShapingEmSquare: Integer;
     FDC: HDC;
     FFont: HFONT;
     FStockFont: HGDIOBJ;
     FFontKey: string;
-    FEmSquare: Integer;
-    FEmSquareKey: string;
     FCharHeight: Integer;
     FCharHeightKey: string;
     FPaths: TDictionary<string, ISkPath>;
@@ -961,8 +962,11 @@ type
     FOperationDepth, FOperationKind: Integer;
     FShapingRTL: Boolean;
     FOperationKey: Cardinal;
+    FOperationBounds: TRect;
+    FOperationBounded, FOperationBoundsBlocked: Boolean;
     FRecordingClosed: Boolean;
     FOperationRecorder: ISkPictureRecorder;
+    FOperationSourceSurface, FOperationPatternSurface: ISkSurface;
     FOutputCanvas: ISkCanvas;
     FStateStack: TObjectList<TSkiaCanvasState>;
     FTextToCurves: Boolean;
@@ -979,11 +983,12 @@ type
     procedure InitializeCompatibility;
     function BeginOperation(Kind: Integer): Boolean;
     procedure EndOperation;
+    procedure SetOperationBounds(const Bounds: TRectF; Margin: Single = 0);
     procedure ApplyClips(const Target: ISkCanvas);
     procedure AppendClip(const Path: ISkPath; Op: TSkClipOp);
     function ReadDevicePixels(out W, H: Integer): TArray<TAlphaColor>;
     function ClipPixels: TArray<TAlphaColor>;
-    procedure CommitPatch(const Pixels: TArray<TAlphaColor>; W, H: Integer);
+    procedure CommitPatch(const Pixels: TArray<TAlphaColor>; W, H: Integer; BlendMode: TSkBlendMode = TSkBlendMode.SrcOver; OriginX: Integer = 0; OriginY: Integer = 0);
     procedure TransferImage(const Image: ISkImage; const Source, Dest: TRectF);
     function GraphicImage(Graphic: TGraphic): ISkImage;
 {$IFDEF MSWINDOWS}
@@ -1041,7 +1046,7 @@ type
     procedure RequiredState(ReqState: TCanvasState); override;
 
     /// <summary>
-    /// Provides a pixel buffer when the canvas implementation supports direct access.
+    /// Provides a writable pixel buffer on bitmap canvases; other implementations return False.
     /// </summary>
     function LockPixels(out APixels: TArray<TAlphaColor>; out AWidth, AHeight: Integer): Boolean; virtual;
     /// <summary>
@@ -1666,6 +1671,11 @@ begin
   end;
 end;
 
+procedure TSkiaBrush.PatternChanged(Sender: TObject);
+begin
+  Changed;
+end;
+
 procedure TSkiaBrush.SetPattern(Value: TBitmap);
 begin
   if FPattern <> Value then
@@ -1675,6 +1685,7 @@ begin
     begin
       FPattern := TBitmap.Create;
       FPattern.Assign(Value);
+      FPattern.OnChange := PatternChanged;
     end;
     Changed;
   end;
@@ -1689,6 +1700,9 @@ end;
 
 function TSkiaBrush.TryAssignFromLogBrush(const LB: TLogBrush): Boolean;
 begin
+  Result := False;
+  if not (LB.lbStyle in [BS_SOLID,BS_NULL,BS_HATCHED]) then
+    Exit;
   Result := True;
   { Reset extended brush state before importing the GDI handle. }
   FAlpha := 255;
@@ -1724,9 +1738,7 @@ begin
       end;
     BS_PATTERN, BS_DIBPATTERN, BS_DIBPATTERNPT:
       begin
-        { Bitmap patterns are resolved by TryAssignFromHandle. }
-        Style := bsSolid;
-        Color := TColor(LB.lbColor and $FFFFFF);
+        Result := False;
       end;
   else
     Result := False;
@@ -1738,6 +1750,8 @@ end;
 function TSkiaBrush.TryAssignFromHandle(ABrush: HBRUSH): Boolean;
 var
   LB: TLogBrush;
+  Bitmap: TBitmap;
+  CopyHandle: HBITMAP;
 begin
   Result := False;
   if ABrush = 0 then
@@ -1745,6 +1759,27 @@ begin
   FillChar(LB, SizeOf(LB), 0);
   if GetObject(ABrush, SizeOf(LB), @LB) = 0 then
     Exit;
+  if LB.lbStyle = BS_PATTERN then
+  begin
+    CopyHandle := HBITMAP(CopyImage(HBITMAP(LB.lbHatch), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+    if CopyHandle = 0 then
+      Exit;
+    Bitmap := TBitmap.Create;
+    try
+      Bitmap.Handle := CopyHandle;
+      CopyHandle := 0;
+      SetPattern(Bitmap);
+      FAlpha := 255;
+      FGradient := gkNone;
+      Style := bsSolid;
+      Result := True;
+    finally
+      Bitmap.Free;
+      if CopyHandle <> 0 then
+        DeleteObject(CopyHandle);
+    end;
+    Exit;
+  end;
   Result := TryAssignFromLogBrush(LB);
 end;
 
@@ -1754,6 +1789,8 @@ procedure TSkiaBrush.Assign(Source: TPersistent);
 var
   B: TSkiaBrush;
 begin
+  if Source = Self then
+    Exit;
   if Source is TSkiaBrush then
   begin
     B := TSkiaBrush(Source);
@@ -1766,6 +1803,7 @@ begin
     begin
       FPattern := TBitmap.Create;
       FPattern.Assign(B.FPattern);
+      FPattern.OnChange := PatternChanged;
     end;
     inherited Assign(Source);
   end
@@ -1774,10 +1812,22 @@ begin
 
     SetPattern(TBitmap(Source));
   end
-{$IFDEF MSWINDOWS}
-  else if (Source is TBrush) and TBrush(Source).HandleAllocated and TryAssignFromHandle(TBrush(Source).Handle) then
+  else if (Source is TBrush) and (TBrush(Source).Bitmap <> nil) then
   begin
-
+    FAlpha := 255;
+    FGradient := gkNone;
+    FreeAndNil(FPattern);
+    FPattern := TBitmap.Create;
+    FPattern.Assign(TBrush(Source).Bitmap);
+    FPattern.OnChange := PatternChanged;
+    Changed;
+    Style := bsSolid;
+  end
+{$IFDEF MSWINDOWS}
+  else if (Source is TBrush) and TBrush(Source).HandleAllocated then
+  begin
+    if not TryAssignFromHandle(TBrush(Source).Handle) then
+      raise ESkiaCanvasError.Create('Cannot import this native GDI brush');
   end
 {$ENDIF}
   else
@@ -1823,6 +1873,8 @@ end;
 
 procedure TSkiaPen.SetMiterLimit(Value: Single);
 begin
+  if IsNan(Value) or IsInfinite(Value) or (Value < 1) then
+    raise ESkiaCanvasError.Create('MiterLimit must be finite and at least 1');
   if FMiterLimit <> Value then
   begin
     FMiterLimit := Value;
@@ -1831,7 +1883,21 @@ begin
 end;
 
 procedure TSkiaPen.SetDashPattern(const Value: TArray<Single>);
+var
+  I: Integer;
+  Total: Double;
 begin
+  if Odd(Length(Value)) then
+    raise ESkiaCanvasError.Create('DashPattern must contain an even number of intervals');
+  Total := 0;
+  for I := 0 to High(Value) do
+  begin
+    if IsNan(Value[I]) or IsInfinite(Value[I]) or (Value[I] < 0) then
+      raise ESkiaCanvasError.Create('DashPattern intervals must be finite and nonnegative');
+    Total := Total + Value[I];
+  end;
+  if (Length(Value) > 0) and (Total <= 0) then
+    raise ESkiaCanvasError.Create('DashPattern must have a positive total length');
   FDashPattern := Copy(Value);
   Changed;
 end;
@@ -1849,6 +1915,8 @@ var
   ELP: TExtLogPen;
   StyleBits, CapBits, JoinBits: Cardinal;
   I, DashCount: Integer;
+  Intervals: TArray<Single>;
+  Total: Double;
 begin
   Result := False;
   if APen = 0 then
@@ -1909,12 +1977,19 @@ begin
 
     if StyleBits = PS_USERSTYLE then
     begin
+      if (ELP.elpNumEntries = 0) or (ELP.elpNumEntries > 16) then
+        Exit;
       DashCount := ELP.elpNumEntries;
-      if DashCount > 16 then
-        DashCount := 16;
-      SetLength(FDashPattern, DashCount);
-      for I := 0 to DashCount - 1 do
-        FDashPattern[I] := ELP.elpStyleEntry[I];
+      SetLength(Intervals, DashCount * (1 + Ord(Odd(DashCount))));
+      Total := 0;
+      for I := 0 to High(Intervals) do
+      begin
+        Intervals[I] := ELP.elpStyleEntry[I mod DashCount];
+        Total := Total + Intervals[I];
+      end;
+      if Total <= 0 then
+        Exit;
+      SetDashPattern(Intervals);
     end;
     Result := True;
   end
@@ -2011,7 +2086,12 @@ begin
     Include(St, fsStrikeOut);
   Style := St;
   Charset := TFontCharset(LF.lfCharSet);
-  Pitch := TFontPitch(LF.lfPitchAndFamily and $0F);
+  case LF.lfPitchAndFamily and $03 of
+    FIXED_PITCH: Pitch := fpFixed;
+    VARIABLE_PITCH: Pitch := fpVariable;
+  else
+    Pitch := fpDefault;
+  end;
   Changed;
 end;
 
@@ -2259,15 +2339,23 @@ end;
 function TSkiaFontManager.LoadTypefaceFromStream(AStream: TStream; ATTCIndex: Integer): ISkTypeface;
 var
   Bytes: TBytes;
-  Position: Int64;
+  Position, ByteCount: Int64;
   Count: DWORD;
   Handle: THandle;
 begin
   if AStream = nil then
     raise ESkiaCanvasError.Create(SSkiaNilFontStream);
 
+  if ATTCIndex < 0 then
+    raise ESkiaCanvasError.Create(SSkiaInvalidFontStream);
   Position := AStream.Position;
-  SetLength(Bytes, AStream.Size - Position);
+  ByteCount := AStream.Size;
+  if (Position < 0) or (ByteCount < Position) then
+    raise ESkiaCanvasError.Create(SSkiaInvalidFontStream);
+  ByteCount := ByteCount - Position;
+  if ByteCount > High(Integer) then
+    raise ESkiaCanvasError.Create(SSkiaInvalidFontStream);
+  SetLength(Bytes, Integer(ByteCount));
   if Length(Bytes) > 0 then
     AStream.ReadBuffer(Bytes[0], Length(Bytes));
   AStream.Position := Position;
@@ -2481,6 +2569,8 @@ end;
 
 procedure TSkiaGdiGlyphCache.Clear;
 begin
+  if FLock = nil then
+    Exit;
   FLock.Enter;
   try
 
@@ -2587,7 +2677,18 @@ begin
   FFont := CreateFontIndirectW(ShapingLF);
   FFontKey := FontKey;
   if FFont <> 0 then
+  begin
     FStockFont := SelectObject(FDC, FFont);
+    if (FStockFont = 0) or (FStockFont = HGDIOBJ(-1)) then
+    begin
+      DeleteObject(FFont);
+      FFont := 0;
+      FStockFont := 0;
+      FFontKey := '';
+    end;
+  end
+  else
+    FFontKey := '';
 end;
 
 { Use a non-nested callback to match the EnumFontFamiliesExW calling convention. }
@@ -2764,6 +2865,8 @@ begin
     FKern.Clear;
     FKernKey := FFontKey;
     Count := GetKerningPairsW(FDC, 0, nil);
+    if Count > DWORD(High(Integer) div SizeOf(TKerningPair)) then
+      Exit;
     if Count > 0 then
     begin
       SetLength(Pairs, Count);
@@ -3012,12 +3115,26 @@ end;
 function TSkiaGdiGlyphCache.ShapeText(const LF: TLogFontW; const FontKey: string; EmSquare: Integer; const Text: UnicodeString; out Glyphs: TArray<TGdiShapedGlyph>; RequireOpenType: Boolean): Boolean;
 var
   List: TList<TGdiShapedGlyph>;
+  I: Integer;
 begin
   FLock.Enter;
   try
     Result := False;
     FLastShapeUsedOpenType := False;
     SetLength(Glyphs, 0);
+    I := 1;
+    while I <= Length(Text) do
+    begin
+      if (Text[I] >= #$D800) and (Text[I] <= #$DBFF) then
+      begin
+        if (I = Length(Text)) or (Text[I+1] < #$DC00) or (Text[I+1] > #$DFFF) then
+          Exit;
+        Inc(I);
+      end
+      else if (Text[I] >= #$DC00) and (Text[I] <= #$DFFF) then
+        Exit;
+      Inc(I);
+    end;
     if Text = '' then
       Exit(True);
     if EmSquare <= 0 then
@@ -3113,12 +3230,23 @@ begin
 end;
 
 { Convert VCL bitmap pixels to an unpremultiplied Skia image, preserving defined alpha and color keys. }
+function MakeRasterSurface(AWidth, AHeight: Integer): ISkSurface;
+begin
+  if (AWidth <= 0) or (AHeight <= 0) or
+    (Int64(AWidth) * AHeight > High(Integer) div SizeOf(TAlphaColor)) then
+    raise ESkiaCanvasError.CreateFmt(SSkiaInvalidBitmapSize, [AWidth, AHeight]);
+  Result := TSkSurface.MakeRaster(AWidth, AHeight);
+  if Result = nil then
+    raise ESkiaCanvasError.CreateFmt(SSkiaInvalidBitmapSize, [AWidth, AHeight]);
+end;
+
 function BitmapToSkImage(ABitmap: TBitmap): ISkImage;
 var
   Pixels: TArray<TAlphaColor>;
   X, Y: Integer;
   Row: PCardinal;
   C: Cardinal;
+{$IFNDEF FPC} Converted: TBitmap; {$ENDIF}
 {$IFDEF FPC}Image: TLazIntfImage;
   Color: TFPColor;
   RowPixels: TArray<Cardinal>; {$ENDIF}
@@ -3126,13 +3254,19 @@ begin
   Result := nil;
   if (ABitmap = nil) or (ABitmap.Width <= 0) or (ABitmap.Height <= 0) then
     Exit;
+  if Int64(ABitmap.Width) * ABitmap.Height > High(Integer) div SizeOf(TAlphaColor) then
+    raise ESkiaCanvasError.Create('Bitmap is too large');
 {$IFDEF FPC}
   { LCL SetPixelFormat discards the image; read its actual channel layout instead. }
   Image := ABitmap.CreateIntfImage;
   try
     SetLength(RowPixels, ABitmap.Width);
 {$ELSE}
-  ABitmap.PixelFormat := pf32bit;
+  Converted := TBitmap.Create;
+  try
+    Converted.Assign(ABitmap);
+    ABitmap := Converted;
+    ABitmap.PixelFormat := pf32bit;
 {$ENDIF}
   SetLength(Pixels, ABitmap.Width * ABitmap.Height);
   for Y := 0 to ABitmap.Height - 1 do
@@ -3170,9 +3304,13 @@ begin
   Result := TSkImage.MakeRasterCopy(
 
     TSkImageInfo.Create(ABitmap.Width, ABitmap.Height, TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(Pixels), ABitmap.Width * SizeOf(TAlphaColor));
-{$IFDEF FPC} finally
-  Image.Free;
-end; {$ENDIF}
+  finally
+{$IFDEF FPC}
+    Image.Free;
+{$ELSE}
+    Converted.Free;
+{$ENDIF}
+  end;
 end;
 
 function TSkiaResourceManager.BuildFillPaint(ABrush: TSkiaBrush; const Bounds: TRectF): ISkPaint;
@@ -3611,23 +3749,28 @@ end;
 
 function TSkiaCanvas.GetClipRect: TRect;
 var
-  Pixels: TArray<TAlphaColor>;
-  X, Y: Integer;
+  ClipCanvas: ISkCanvas;
+  NativeBounds: TRect;
 begin
+  if FOutputCanvas <> nil then
+    NativeBounds := FOutputCanvas.GetDeviceClipBounds
+  else
+    NativeBounds := FCanvas.GetDeviceClipBounds;
   if Length(FClips) = 0 then
-    Exit(Rect(0, 0, FDeviceWidth, FDeviceHeight));
-  Pixels := ClipPixels;
-  Result := Rect(FDeviceWidth, FDeviceHeight, 0, 0);
-  for Y := 0 to FDeviceHeight - 1 do
-    for X := 0 to FDeviceWidth - 1 do
-      if Pixels[Y * FDeviceWidth + X] shr 24 <> 0 then
-      begin
-        Result.Left := Math.Min(Result.Left, X);
-        Result.Top := Math.Min(Result.Top, Y);
-        Result.Right := Math.Max(Result.Right, X + 1);
-        Result.Bottom := Math.Max(Result.Bottom, Y + 1);
-      end;
-  if Result.Right <= Result.Left then
+    Exit(NativeBounds);
+  ClipCanvas := FBacking.GetCanvas;
+  ClipCanvas.Save;
+  try
+    ApplyClips(ClipCanvas);
+    Result := ClipCanvas.GetDeviceClipBounds;
+  finally
+    ClipCanvas.Restore;
+  end;
+  Result.Left := Max(Result.Left, NativeBounds.Left);
+  Result.Top := Max(Result.Top, NativeBounds.Top);
+  Result.Right := Min(Result.Right, NativeBounds.Right);
+  Result.Bottom := Min(Result.Bottom, NativeBounds.Bottom);
+  if (Result.Right <= Result.Left) or (Result.Bottom <= Result.Top) then
     Result := Rect(0, 0, 0, 0);
 end;
 
@@ -3643,15 +3786,18 @@ end;
 
 function TSkiaCanvas.GetPixel(X, Y: Integer): TColor;
 var
-  Pixels: TArray<TAlphaColor>;
-  W, H: Integer;
+  Pixel: TAlphaColor;
   P: TPoint;
 begin
   P := LPToDP(Point(X, Y));
-  Pixels := ReadDevicePixels(W, H);
   Result := clBlack;
-  if (P.X >= 0) and (P.Y >= 0) and (P.X < W) and (P.Y < H) then
-    Result := AlphaColorToColor(Pixels[P.Y * W + P.X]);
+  if (P.X < 0) or (P.Y < 0) or (P.X >= FDeviceWidth) or (P.Y >= FDeviceHeight) or
+    (FBacking = nil) then
+    Exit;
+  if not FBacking.ReadPixels(TSkImageInfo.Create(1, 1, TSkColorType.BGRA8888,
+    TSkAlphaType.Unpremul), @Pixel, SizeOf(Pixel), P.X, P.Y) then
+    raise ESkiaCanvasError.Create(SSkiaImagePixelsUnavailable);
+  Result := AlphaColorToColor(Pixel);
 end;
 
 procedure TSkiaCanvas.SetPixel(X, Y: Integer; Value: TColor);
@@ -3659,6 +3805,28 @@ var
   Paint: ISkPaint;
   P: TPoint;
 begin
+  if (Self is TSkiaBitmapCanvas) and (FOperationDepth = 0) and (Length(FClips) = 0) then
+  begin
+    Lock;
+    try
+      if FRecordingClosed then
+        Exit;
+      P := LPToDP(Point(X, Y));
+      Paint := TSkPaint.Create;
+      Paint.Color := ColorToAlphaColor(Value);
+      Paint.AntiAlias := False;
+      FCanvas.Save;
+      try
+        FCanvas.ResetMatrix;
+        FCanvas.DrawPoint(P.X, P.Y, Paint);
+      finally
+        FCanvas.Restore;
+      end;
+    finally
+      Unlock;
+    end;
+    Exit;
+  end;
   if not BeginOperation(0) then
     Exit;
   try
@@ -3685,8 +3853,10 @@ end;
 
 function TSkiaCanvas.LockPixels(out APixels: TArray<TAlphaColor>; out AWidth, AHeight: Integer): Boolean;
 begin
-  APixels := ReadDevicePixels(AWidth, AHeight);
-  Result := Length(APixels) > 0;
+  APixels := nil;
+  AWidth := 0;
+  AHeight := 0;
+  Result := False;
 end;
 
 procedure TSkiaCanvas.UnlockPixels;
@@ -3758,7 +3928,11 @@ end;
 procedure TSkiaCanvas.DrawPixmap(X, Y: Integer; const Pixmap: ISkPixmap);
 begin
   if Pixmap <> nil then
+  begin
+    if (Int64(X) + Pixmap.Width > High(Integer)) or (Int64(Y) + Pixmap.Height > High(Integer)) then
+      raise ESkiaCanvasError.Create('Pixmap destination is out of range');
     DrawPixmap(Rect(X, Y, X + Pixmap.Width, Y + Pixmap.Height), Pixmap);
+  end;
 end;
 
 procedure TSkiaCanvas.DrawPixmap(const Dest: TRect; const Pixmap: ISkPixmap);
@@ -3793,8 +3967,8 @@ var
   CX, CY: Double;
 begin
   Result := RectF(X1, Y1, X2, Y2);
-  CX := (X1 + X2) / 2;
-  CY := (Y1 + Y2) / 2;
+  CX := (Double(X1) + X2) / 2;
+  CY := (Double(Y1) + Y2) / 2;
   StartAngle := RadToDeg(ArcTan2(Y3 - CY, X3 - CX));
   SweepAngle := RadToDeg(ArcTan2(Y4 - CY, X4 - CX)) - StartAngle;
   while SweepAngle >= 0 do
@@ -4012,6 +4186,7 @@ begin
   if not BeginOperation(1) then
     Exit;
   try
+    SetOperationBounds(RectF(X1, Y1, X2, Y2), Max(1, FPen.Width) * FPen.MiterLimit);
     if (X2 <= X1) or (Y2 <= Y1) then
       Exit;
     R := RectF(X1, Y1, X2, Y2);
@@ -4093,6 +4268,7 @@ begin
   if not BeginOperation(0) then
     Exit;
   try
+    SetOperationBounds(RectToRectF(Rect));
     B := AcquireFillPaint(RectToRectF(Rect));
     if B <> nil then
       FCanvas.DrawRect(RectToRectF(Rect), B);
@@ -4127,6 +4303,7 @@ begin
   if not BeginOperation(1) then
     Exit;
   try
+    SetOperationBounds(RectF(Min(FPenPos.X, X), Min(FPenPos.Y, Y), Max(FPenPos.X, X), Max(FPenPos.Y, Y)), Max(1, FPen.Width) * FPen.MiterLimit);
     P := AcquireStrokePaint;
     if P = nil then
     begin
@@ -4262,6 +4439,7 @@ begin
   if not BeginOperation(3) then
     Exit;
   try
+    SetOperationBounds(RectToRectF(Rect));
 
     P := TSkPaint.Create;
     P.Style := TSkPaintStyle.Stroke;
@@ -4286,7 +4464,7 @@ begin
 {$IFDEF MSWINDOWS}
   if Graphic is TMetafile then
   begin
-    DrawMetafile(TMetafile(Graphic), RectF(X, Y, X + Graphic.Width, Y + Graphic.Height));
+    DrawMetafile(TMetafile(Graphic), RectF(X, Y, Double(X) + Graphic.Width, Double(Y) + Graphic.Height));
     Exit;
   end;
 {$ENDIF}
@@ -4386,6 +4564,7 @@ begin
   if not BeginOperation(4) then
     Exit;
   try
+    SetOperationBounds(RectToRectF(Dest));
     Image := BitmapToSkImage(Bitmap);
     if Image = nil then
       Exit;
@@ -4403,6 +4582,7 @@ begin
   if not BeginOperation(2) then
     Exit;
   try
+    SetOperationBounds(RectToRectF(Dest));
     Image := SourceRectangle(SrcCanvas, RectToRectF(SrcRect));
     if Image <> nil then
       TransferImage(Image, CompatSourceBounds(Image, SrcRect.Width, SrcRect.Height), RectToRectF(Dest));
@@ -4414,36 +4594,48 @@ end;
 function TSkiaCanvas.GetSrcImage(Src: TSkiaCanvas): ISkImage;
 begin
   Result := nil;
-  if Src <> nil then
+  if (Src <> nil) and (Src.FBacking <> nil) then
     Result := Src.FBacking.MakeImageSnapshot;
 end;
 
-{ Copy the bitmap before conversion: BitmapToSkImage normalizes its pixel format. }
+{ BitmapToSkImage preserves caller-owned bitmap data on both Delphi and FPC. }
 function BltBitmapSource(Bitmap: TBitmap): TSkiaBitmapCanvas;
 var
-  Copy: TBitmap;
   Image: ISkImage;
 begin
   Result := nil;
   if (Bitmap = nil) or (Bitmap.Width <= 0) or (Bitmap.Height <= 0) then
     Exit;
-  Copy := TBitmap.Create;
+  Image := BitmapToSkImage(Bitmap);
+  if Image = nil then
+    Exit;
+  Result := TSkiaBitmapCanvas.Create(Bitmap.Width, Bitmap.Height);
   try
-    Copy.Assign(Bitmap);
-    Image := BitmapToSkImage(Copy);
-    Result := TSkiaBitmapCanvas.Create(Copy.Width, Copy.Height);
-    try
-      Result.FCanvas.DrawImage(Image, 0, 0);
-    except
-      Result.Free;
-      raise;
-    end;
-  finally
-    Copy.Free;
+    Result.FCanvas.DrawImage(Image, 0, 0);
+  except
+    Result.Free;
+    Result := nil;
+    raise;
   end;
 end;
 
-{ GDI reads source logical coordinates; destination DIB pixels have opaque alpha. }
+procedure NormalizeBltSource(var X,Y,Width,Height: Integer);
+begin
+  if (Width = Low(Integer)) or (Height = Low(Integer)) then
+    raise ESkiaCanvasError.Create('Blit dimensions are out of range');
+  if ((Width < 0) and (Int64(X)+Width < Low(Integer))) or
+    ((Height < 0) and (Int64(Y)+Height < Low(Integer))) then
+    raise ESkiaCanvasError.Create('Blit source coordinates are out of range');
+  if Width < 0 then X := X+Width;
+  if Height < 0 then Y := Y+Height;
+  Width := Abs(Width);
+  Height := Abs(Height);
+  if (Int64(X)+Width-1 > High(Integer)) or (Int64(Y)+Height-1 > High(Integer)) then
+    raise ESkiaCanvasError.Create('Blit source coordinates are out of range');
+  if Int64(Width)*Height > High(Integer) div SizeOf(TAlphaColor) then
+    raise ESkiaCanvasError.Create('Blit source is too large');
+end;
+
 {$IFDEF MSWINDOWS}
 
 function BltDCSource(DC: HDC; X, Y, Width, Height: Integer): TSkiaBitmapCanvas;
@@ -4459,12 +4651,7 @@ begin
   Result := nil;
   if (DC = 0) or (Width = 0) or (Height = 0) then
     Exit;
-  if Width < 0 then
-    X := X + Width;
-  if Height < 0 then
-    Y := Y + Height;
-  Width := Abs(Width);
-  Height := Abs(Height);
+  NormalizeBltSource(X,Y,Width,Height);
   FillChar(Info, SizeOf(Info), 0);
   Info.bmiHeader.biSize := SizeOf(Info.bmiHeader);
   Info.bmiHeader.biWidth := Width;
@@ -4538,12 +4725,7 @@ begin
 {$IFDEF MSWINDOWS}
   Result := BltDCSource(Canvas.Handle, X, Y, Width, Height);
 {$ELSE}
-  if Width < 0 then
-    X := X + Width;
-  if Height < 0 then
-    Y := Y + Height;
-  Width := Abs(Width);
-  Height := Abs(Height);
+  NormalizeBltSource(X,Y,Width,Height);
   SetLength(Pixels, NativeInt(Width) * Height);
   Canvas.Lock;
   try
@@ -4912,9 +5094,10 @@ begin
   if not BeginOperation(2) then
     Exit;
   try
+    SetOperationBounds(RectF(X, Y, Double(X) + Width, Double(Y) + Height));
     if (Width <= 0) or (Height <= 0) then
       Exit;
-    Image := SourceRectangle(Src, RectF(XSrc, YSrc, XSrc + Width, YSrc + Height));
+    Image := SourceRectangle(Src, RectF(XSrc, YSrc, Double(XSrc) + Width, Double(YSrc) + Height));
     if Image <> nil then
       FCanvas.DrawImage(Image, X, Y);
   finally
@@ -4929,11 +5112,12 @@ begin
   if not BeginOperation(2) then
     Exit;
   try
+    SetOperationBounds(RectF(X, Y, Double(X) + Width, Double(Y) + Height));
     if (Width = 0) or (Height = 0) or (SrcWidth = 0) or (SrcHeight = 0) then
       Exit;
-    Image := SourceRectangle(Src, RectF(XSrc, YSrc, XSrc + SrcWidth, YSrc + SrcHeight));
+    Image := SourceRectangle(Src, RectF(XSrc, YSrc, Double(XSrc) + SrcWidth, Double(YSrc) + SrcHeight));
     if Image <> nil then
-      TransferImage(Image, CompatSourceBounds(Image, SrcWidth, SrcHeight), RectF(X, Y, X + Width, Y + Height));
+      TransferImage(Image, CompatSourceBounds(Image, SrcWidth, SrcHeight), RectF(X, Y, Double(X) + Width, Double(Y) + Height));
   finally
     EndOperation;
   end;
@@ -4941,20 +5125,35 @@ end;
 
 procedure TSkiaCanvas.MaskBlt(X, Y, Width, Height: Integer; Src: TSkiaCanvas; XSrc, YSrc: Integer; Mask: TBitmap; XMask, YMask: Integer);
 var
-  Image: ISkImage;
-  Source, Pixels: TArray<TAlphaColor>;
+  Image, MaskImage: ISkImage;
+  MaskCopy: TBitmap;
+  Source, Pixels, MaskPixels: TArray<TAlphaColor>;
   IX, IY, SX, SY, MX, MY: Integer;
   Point: TPointF;
 begin
   if not BeginOperation(2) then
     Exit;
   try
+    SetOperationBounds(RectF(X, Y, Double(X) + Width, Double(Y) + Height));
     if (Width <= 0) or (Height <= 0) or (Mask = nil) then
       Exit;
-    Image := SourceRectangle(Src, RectF(XSrc, YSrc, XSrc + Width, YSrc + Height));
+    Image := SourceRectangle(Src, RectF(XSrc, YSrc, Double(XSrc) + Width, Double(YSrc) + Height));
     if Image = nil then
       Exit;
     Source := CompatReadImage(Image);
+    MaskCopy := TBitmap.Create;
+    try
+      MaskCopy.Assign(Mask);
+      MaskCopy.Transparent := False;
+{$IFDEF FPC} MaskCopy.Masked := False; {$ENDIF}
+      MaskCopy.AlphaFormat := afIgnored;
+      MaskImage := BitmapToSkImage(MaskCopy);
+    finally
+      MaskCopy.Free;
+    end;
+    if MaskImage = nil then
+      Exit;
+    MaskPixels := CompatReadImage(MaskImage);
     SetLength(Pixels, Width * Height);
     for IY := 0 to Height - 1 do
       for IX := 0 to Width - 1 do
@@ -4965,7 +5164,7 @@ begin
         MX := XMask + IX;
         MY := YMask + IY;
         if (SX >= 0) and (SY >= 0) and (SX < Src.FDeviceWidth) and (SY < Src.FDeviceHeight) and (MX >= 0) and (MY >= 0) and (MX < Mask.Width) and (MY < Mask.Height) and
-          (ColorToRGB(Mask.Canvas.Pixels[MX, MY]) <> 0) then
+          ((MaskPixels[MY * MaskImage.Width + MX] and $FFFFFF) <> 0) then
           Pixels[IY * Width + IX] := Source[IY * Image.Width + IX] or $FF000000;
       end;
     FCanvas.DrawImage(CompatImage(Pixels, Width, Height), X, Y);
@@ -4985,13 +5184,13 @@ begin
   try
     if (Length(Points) < 3) or (Width = 0) or (Height = 0) then
       Exit;
-    DX1 := Points[1].X - Points[0].X;
-    DY1 := Points[1].Y - Points[0].Y;
-    DX2 := Points[2].X - Points[0].X;
-    DY2 := Points[2].Y - Points[0].Y;
+    DX1 := Double(Points[1].X) - Points[0].X;
+    DY1 := Double(Points[1].Y) - Points[0].Y;
+    DX2 := Double(Points[2].X) - Points[0].X;
+    DY2 := Double(Points[2].Y) - Points[0].Y;
     if Abs(DX1 * DY2 - DX2 * DY1) < 1E-12 then
       Exit;
-    Image := SourceRectangle(Src, RectF(XSrc, YSrc, XSrc + Width, YSrc + Height));
+    Image := SourceRectangle(Src, RectF(XSrc, YSrc, Double(XSrc) + Width, Double(YSrc) + Height));
     if Image = nil then
       Exit;
     M := TMatrix.Identity;
@@ -5037,69 +5236,72 @@ var
 begin
   if not BeginOperation(0) then
     Exit;
-  FCanvas.Save;
   try
+    FCanvas.Save;
+    try
 
-    if FFont.Orientation <> 0 then
-    begin
-      FCanvas.Translate(X, Y);
-      FCanvas.Rotate(-FFont.Orientation / 10);
-      FCanvas.Translate(-X, -Y);
-    end;
+      if FFont.Orientation <> 0 then
+      begin
+        FCanvas.Translate(X, Y);
+        FCanvas.Rotate(-FFont.Orientation / 10);
+        FCanvas.Translate(-X, -Y);
+      end;
 
-    if Text = '' then
-      Exit;
-    { Shape once so text outlines and their background share the same advance. }
-    UseCurves := FTextToCurves and PrepareCurvesText(Text, Curves);
-    { A non-clear brush paints an opaque text background using the measured bounds. }
-    if FBrush.Style <> bsClear then
-    begin
-      Fnt := AcquireFont;
+      if Text = '' then
+        Exit;
+      { Shape once so text outlines and their background share the same advance. }
+      UseCurves := FTextToCurves and PrepareCurvesText(Text, Curves);
+      { A non-clear brush paints an opaque text background using the measured bounds. }
+      if FBrush.Style <> bsClear then
+      begin
+        Fnt := AcquireFont;
+        if UseCurves then
+          TextW := Curves.WidthPx
+        else
+          TextW := Fnt.MeasureText(Text);
+        Fnt.GetMetrics(Metrics);
+        BgPaint := AcquireFillPaint(RectF(X, Y, X + TextW, Y + Metrics.Descent - Metrics.Ascent));
+        if BgPaint <> nil then
+          FCanvas.DrawRect(RectF(X, Y, X + TextW, Y + Metrics.Descent - Metrics.Ascent), BgPaint);
+      end;
+
       if UseCurves then
-        TextW := Curves.WidthPx
-      else
-        TextW := Fnt.MeasureText(Text);
+      begin
+        DrawCurvesText(X, Y, Curves);
+        Exit;
+      end;
+      Fnt := AcquireFont;
+      Paint := TSkPaint.Create;
+      Paint.Style := TSkPaintStyle.Fill;
+      Paint.Color := ColorToAlphaColor(FFont.Color, FFont.Alpha);
+      Paint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
+      { Skia draws at the baseline; its negative ascent converts the VCL top coordinate. }
       Fnt.GetMetrics(Metrics);
-      BgPaint := AcquireFillPaint(RectF(X, Y, X + TextW, Y + Metrics.Descent - Metrics.Ascent));
-      if BgPaint <> nil then
-        FCanvas.DrawRect(RectF(X, Y, X + TextW, Y + Metrics.Descent - Metrics.Ascent), BgPaint);
-    end;
-
-    if UseCurves then
-    begin
-      DrawCurvesText(X, Y, Curves);
-      Exit;
-    end;
-    Fnt := AcquireFont;
-    Paint := TSkPaint.Create;
-    Paint.Style := TSkPaintStyle.Fill;
-    Paint.Color := ColorToAlphaColor(FFont.Color, FFont.Alpha);
-    Paint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
-    { Skia draws at the baseline; its negative ascent converts the VCL top coordinate. }
-    Fnt.GetMetrics(Metrics);
-    Baseline := Y - Metrics.Ascent;
-    PlainTextPaths(Text, X, Baseline, Fnt, Paint);
-    { Draw underline and strikeout explicitly because glyph outlines exclude decorations. }
-    if (fsUnderline in FFont.Style) or (fsStrikeOut in FFont.Style) then
-    begin
-      TextW := Fnt.MeasureText(Text);
-      LinePaint := TSkPaint.Create;
-      LinePaint.Style := TSkPaintStyle.Fill;
-      LinePaint.Color := Paint.Color;
-      LinePaint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
-      if fsUnderline in FFont.Style then
+      Baseline := Y - Metrics.Ascent;
+      PlainTextPaths(Text, X, Baseline, Fnt, Paint);
+      { Draw underline and strikeout explicitly because glyph outlines exclude decorations. }
+      if (fsUnderline in FFont.Style) or (fsStrikeOut in FFont.Style) then
       begin
+        TextW := Fnt.MeasureText(Text);
+        LinePaint := TSkPaint.Create;
+        LinePaint.Style := TSkPaintStyle.Fill;
+        LinePaint.Color := Paint.Color;
+        LinePaint.AntiAlias := FFontEdging <> TSkFontEdging.Alias;
+        if fsUnderline in FFont.Style then
+        begin
 
-        FCanvas.DrawRect(RectF(X, Baseline + Metrics.Descent - 1, X + TextW, Baseline + Metrics.Descent), LinePaint);
-      end;
-      if fsStrikeOut in FFont.Style then
-      begin
+          FCanvas.DrawRect(RectF(X, Baseline + Metrics.Descent - 1, X + TextW, Baseline + Metrics.Descent), LinePaint);
+        end;
+        if fsStrikeOut in FFont.Style then
+        begin
 
-        FCanvas.DrawRect(RectF(X, Baseline + (Metrics.Ascent + Metrics.Descent) / 2 - 0.5, X + TextW, Baseline + (Metrics.Ascent + Metrics.Descent) / 2 + 0.5), LinePaint);
+          FCanvas.DrawRect(RectF(X, Baseline + (Metrics.Ascent + Metrics.Descent) / 2 - 0.5, X + TextW, Baseline + (Metrics.Ascent + Metrics.Descent) / 2 + 0.5), LinePaint);
+        end;
       end;
+    finally
+      FCanvas.Restore;
     end;
   finally
-    FCanvas.Restore;
     EndOperation;
   end;
 end;
@@ -5461,7 +5663,7 @@ begin
     Target := ColorToAlphaColor(Color) and $FFFFFF;
     if (FillStyle = fsSurface) and (Seed <> Target) then
       Exit;
-    Surface := TSkSurface.MakeRaster(W, H);
+    Surface := MakeRasterSurface(W, H);
     Surface.GetCanvas.SetMatrix(FMatrix);
     a := DPToLP(Point(0, 0));
     B := DPToLP(Point(W, 0));
@@ -5629,11 +5831,11 @@ begin
     St.SaveCount := FCanvas.Save;
     try
       CaptureState(St);
+      FStateStack.Add(St);
     except
       FCanvas.RestoreToCount(St.SaveCount - 1);
       raise;
     end;
-    FStateStack.Add(St);
     Result := FStateStack.Count;
   except
     St.Free;
@@ -5644,16 +5846,44 @@ end;
 procedure TSkiaCanvas.RestoreState(SavedIndex: Integer);
 var
   I: Integer;
+  Previous: TSkiaCanvasState;
+  PenHandler, BrushHandler, FontHandler: TNotifyEvent;
 begin
   if SavedIndex <= 0 then
     SavedIndex := FStateStack.Count;
   if (SavedIndex < 1) or (SavedIndex > FStateStack.Count) then
     raise ESkiaCanvasError.CreateFmt(SSkiaInvalidSavedState, [SavedIndex, FStateStack.Count]);
 
-  FCanvas.RestoreToCount(FStateStack[SavedIndex - 1].SaveCount - 1);
-  ApplyState(FStateStack[SavedIndex - 1]);
-  for I := FStateStack.Count - 1 downto SavedIndex - 1 do
-    FStateStack.Delete(I);
+  Previous := TSkiaCanvasState.Create;
+  try
+    CaptureState(Previous);
+    try
+      ApplyState(FStateStack[SavedIndex - 1]);
+    except
+      { Keep the native checkpoint until all wrapper resources have been applied. }
+      PenHandler := FPen.OnChange;
+      BrushHandler := FBrush.OnChange;
+      FontHandler := FFont.OnChange;
+      FPen.OnChange := nil;
+      FBrush.OnChange := nil;
+      FFont.OnChange := nil;
+      try
+        ApplyState(Previous);
+        FResources.InvalidateAll;
+      finally
+        FPen.OnChange := PenHandler;
+        FBrush.OnChange := BrushHandler;
+        FFont.OnChange := FontHandler;
+      end;
+      raise;
+    end;
+    FCanvas.RestoreToCount(FStateStack[SavedIndex - 1].SaveCount - 1);
+    FCanvas.SetMatrix(FMatrix);
+    for I := FStateStack.Count - 1 downto SavedIndex - 1 do
+      FStateStack.Delete(I);
+  finally
+    Previous.Free;
+  end;
 end;
 
 function TSkiaCanvas.LPToDP(const P: TPoint): TPoint;
@@ -5681,22 +5911,39 @@ end;
 
 constructor TSkiaBitmapCanvas.Create(AWidth, AHeight: Integer);
 begin
-  if (AWidth <= 0) or (AHeight <= 0) then
+  if (AWidth <= 0) or (AHeight <= 0) or
+    (Int64(AWidth) * AHeight > High(Integer) div SizeOf(TAlphaColor)) then
     raise ESkiaCanvasError.CreateFmt(SSkiaInvalidBitmapSize, [AWidth, AHeight]);
-  FSurface := TSkSurface.MakeRaster(AWidth, AHeight);
+  FSurface := MakeRasterSurface(AWidth, AHeight);
+  if FSurface = nil then
+    raise ESkiaCanvasError.CreateFmt(SSkiaInvalidBitmapSize, [AWidth, AHeight]);
   FWidth := AWidth;
   FHeight := AHeight;
   inherited Create(FSurface.GetCanvas, False);
 end;
 
 function TSkiaBitmapCanvas.LockPixels(out APixels: TArray<TAlphaColor>; out AWidth, AHeight: Integer): Boolean;
-
 begin
-  AWidth := FWidth;
-  AHeight := FHeight;
-  SetLength(FPixelBuffer, FWidth * FHeight);
-  Result := (FSurface <> nil) and FSurface.ReadPixels(TSkImageInfo.Create(FWidth, FHeight, TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(FPixelBuffer), FWidth * SizeOf(TAlphaColor));
-  APixels := FPixelBuffer;
+  APixels := nil;
+  AWidth := 0;
+  AHeight := 0;
+  FPixelBuffer := nil;
+  try
+    SetLength(FPixelBuffer, FWidth * FHeight);
+    Result := (FSurface <> nil) and FSurface.ReadPixels(TSkImageInfo.Create(FWidth, FHeight,
+      TSkColorType.BGRA8888, TSkAlphaType.Unpremul), Pointer(FPixelBuffer), FWidth * SizeOf(TAlphaColor));
+    if not Result then
+    begin
+      FPixelBuffer := nil;
+      Exit;
+    end;
+    APixels := FPixelBuffer;
+    AWidth := FWidth;
+    AHeight := FHeight;
+  except
+    FPixelBuffer := nil;
+    raise;
+  end;
 end;
 
 procedure TSkiaBitmapCanvas.UnlockPixels;
@@ -5792,7 +6039,7 @@ begin
 
   { The recording canvas expires at FinishRecording. Subsequent drawing is
     discarded on an empty clip instead of accessing its released handle. }
-  FDiscardSurface := TSkSurface.MakeRaster(1, 1);
+  FDiscardSurface := MakeRasterSurface(1, 1);
   FCanvas := FDiscardSurface.Canvas;
   FCanvas.ClipRect(RectF(0, 0, 0, 0));
 

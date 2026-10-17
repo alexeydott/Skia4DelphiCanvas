@@ -17,6 +17,16 @@ resourcestring
   SMetafileRecordPlaybackFailed = 'Cannot replay EMF record %d at index %d (Windows error %d)';
 
 type
+  /// Resource ceilings for parsing EMF records. Exceeding a ceiling reports LastError.
+  TMetafileLimits = record
+    MaxRecordBytes: Cardinal;
+    MaxTotalBytes: UInt64;
+    MaxTotalPoints: UInt64;
+    MaxArrayElements: Cardinal;
+    MaxTextChars: Cardinal;
+    MaxSaveDepth: Cardinal;
+  end;
+
   TMetafilePrimitiveKind = (mpkNone, mpkPolyline, mpkPolygon, mpkText, mpkImage);
   TNotifyEventCallback = reference to procedure(Sender: TObject);
   /// <summary>Receives the original enumeration context before a record is parsed.</summary>
@@ -204,6 +214,10 @@ type
     FTextFlatness: Double;
     FConvertTextToCurves: Boolean;
     FLastError: string;
+    FLimits: TMetafileLimits;
+    FParsedBytes, FGeneratedPoints: UInt64;
+    procedure AccountPoints(Count: NativeUInt);
+    procedure SetLimits(const Value: TMetafileLimits);
     function EnumRecord(ADC: HDC; ARecord: PEnhMetaRecord): Integer;
     procedure Reset;
     procedure ClearPath;
@@ -319,6 +333,7 @@ type
     property TextFlatness: Double read FTextFlatness write FTextFlatness;
     property ConvertTextToCurves: Boolean read FConvertTextToCurves write FConvertTextToCurves;
     property LastError: string read FLastError;
+    property Limits: TMetafileLimits read FLimits write SetLimits;
   end;
 
 type
@@ -335,6 +350,8 @@ type
     FError: Cardinal;
     FPathOpen: Boolean;
   public
+    /// <summary>Rejects excessive mapped stroke/text work before any native path capture or replay.</summary>
+    procedure ValidateWork(DC: HDC; RecordData: PEnhMetaRecord);
     /// <summary>Replays one enumeration record, reporting failures instead of silently dropping content.</summary>
     function Play(DC: HDC; Table: Pointer; RecordData: PEnhMetaRecord; Objects: Integer): Boolean;
     property ImageDecoder: TMetafileImageDecoder read FDecoder write FDecoder;
@@ -595,26 +612,27 @@ type
     aemrtext: array [0 .. 0] of TEMRTextLocal;
   end;
 
+  { Serialized array views; RecordArrayAvailable validates the actual count. }
   PIntegerArray = ^TIntegerArray;
-  TIntegerArray = array [0 .. 0] of Integer;
+  TIntegerArray = array [0 .. High(Integer) div SizeOf(Integer) - 1] of Integer;
 
   PPointArray = ^TPointArray;
-  TPointArray = array [0 .. 0] of TPoint;
+  TPointArray = array [0 .. High(Integer) div SizeOf(TPoint) - 1] of TPoint;
 
   PSmallPointArray = ^TSmallPointArray;
-  TSmallPointArray = array [0 .. 0] of TSmallPoint;
+  TSmallPointArray = array [0 .. High(Integer) div SizeOf(TSmallPoint) - 1] of TSmallPoint;
 
   PRectArray = ^TRectArray;
-  TRectArray = array [0 .. 0] of TRect;
+  TRectArray = array [0 .. High(Integer) div SizeOf(TRect) - 1] of TRect;
 
   PTriVertexArray = ^TTriVertexArray;
-  TTriVertexArray = array [0 .. 0] of TTriVertex;
+  TTriVertexArray = array [0 .. High(Integer) div SizeOf(TTriVertex) - 1] of TTriVertex;
 
   PGradientRectArray = ^TGradientRectArrayLocal;
-  TGradientRectArrayLocal = array [0 .. 0] of TGradientRect;
+  TGradientRectArrayLocal = array [0 .. High(Integer) div SizeOf(TGradientRect) - 1] of TGradientRect;
 
   PGradientTriangleArray = ^TGradientTriangleArrayLocal;
-  TGradientTriangleArrayLocal = array [0 .. 0] of TGradientTriangle;
+  TGradientTriangleArrayLocal = array [0 .. High(Integer) div SizeOf(TGradientTriangle) - 1] of TGradientTriangle;
 
   TMetaObjectKind = (mokNone, mokPen, mokBrush, mokFont);
 
@@ -807,6 +825,12 @@ begin
       Result := 16;
     62 .. 64:
       Result := 24;
+    71:
+      Result := 32;
+    72:
+      Result := 40;
+    73, 74:
+      Result := 28;
     75:
       Result := 16;
     76:
@@ -843,6 +867,9 @@ end;
 function EnumMetafilePrimitiveProc(ADC: HDC; ATable: PHandleTable; ARecord: PEnhMetaRecord; AObjects: Integer; AData: Pointer): Integer; stdcall;
 var
   Minimum: Cardinal;
+  TextChars: UInt64;
+  TextIndex: Integer;
+  PolyText: PEMRPolyTextOutLocal;
 begin
   try
     if ARecord = nil then
@@ -850,6 +877,35 @@ begin
     Minimum := MinimumMetafileRecordSize(ARecord.iType);
     if ARecord.nSize < Minimum then
       raise EReadError.CreateFmt(SMetafileInvalidRecord, [ARecord.iType, Minimum, ARecord.nSize]);
+    if ARecord.nSize > TMetafileParser(AData).FLimits.MaxRecordBytes then
+      raise EReadError.Create('EMF record byte limit exceeded');
+    if TMetafileParser(AData).FParsedBytes > TMetafileParser(AData).FLimits.MaxTotalBytes then
+      raise EReadError.Create('EMF total record byte limit exceeded');
+    if ARecord.nSize > TMetafileParser(AData).FLimits.MaxTotalBytes - TMetafileParser(AData).FParsedBytes then
+      raise EReadError.Create('EMF total record byte limit exceeded');
+    Inc(TMetafileParser(AData).FParsedBytes, ARecord.nSize);
+    { Enforce text work limits before callbacks can ask GDI to shape the record. }
+    TextChars := 0;
+    case ARecord.iType of
+      83,84: TextChars := PEMRExtTextOut(ARecord).emrtext.nChars;
+      108: TextChars := PEMRSmallTextOutLocal(ARecord).nChars;
+      96,97:
+        begin
+          PolyText := PEMRPolyTextOutLocal(ARecord);
+          if (PolyText.cStrings < 0) or (Cardinal(PolyText.cStrings) > TMetafileParser(AData).FLimits.MaxTextChars) then
+            raise EReadError.Create('EMF text length limit exceeded');
+          if not TMetafileParser(AData).RecordArrayAvailable(ARecord,40,PolyText.cStrings,SizeOf(TEMRTextLocal)) then
+            raise EReadError.Create('Invalid EMF text array');
+          for TextIndex := 0 to PolyText.cStrings-1 do
+          begin
+            Inc(TextChars,PEMRTextLocal(@PolyText.aemrtext[0])[TextIndex].nChars);
+            if TextChars > TMetafileParser(AData).FLimits.MaxTextChars then
+              raise EReadError.Create('EMF text length limit exceeded');
+          end;
+        end;
+    end;
+    if TextChars > TMetafileParser(AData).FLimits.MaxTextChars then
+      raise EReadError.Create('EMF text length limit exceeded');
     if Assigned(TMetafileParser(AData).FOnRecord) then
       TMetafileParser(AData).FOnRecord(AData, ADC, ATable, ARecord, AObjects);
     Result := TMetafileParser(AData).EnumRecord(ADC, ARecord);
@@ -858,7 +914,8 @@ begin
   except
     on E: Exception do
     begin
-      TMetafileParser(AData).FLastError := E.Message;
+      TMetafileParser(AData).FLastError := Format('EMF record %d type %d: %s: %s', [TMetafileParser(AData).FRecordIndex,ARecord.iType,E.ClassName,E.Message]);
+
       Result := 0;
     end;
   end;
@@ -950,6 +1007,8 @@ var
   L: Integer;
 begin
   L := Length(APoints);
+  if L >= 1024 * 1024 then
+    raise EReadError.Create('EMF generated point limit exceeded');
   SetLength(APoints, L + 1);
   APoints[L] := P;
 end;
@@ -966,6 +1025,8 @@ begin
   if StartIndex > High(ASource) then
     Exit;
   L := Length(APoints);
+  if Length(ASource) - StartIndex > 1024 * 1024 - L then
+    raise EReadError.Create('EMF generated point limit exceeded');
   SetLength(APoints, L + Length(ASource) - StartIndex);
   for I := StartIndex to High(ASource) do
     APoints[L + I - StartIndex] := ASource[I];
@@ -1269,6 +1330,8 @@ begin
     if Abs(AYs[I] - AY) <= CLIP_BOOLEAN_EPSILON then
       Exit;
   L := Length(AYs);
+  if L >= 8192 then
+    raise EReadError.Create('EMF Boolean clip subdivision limit exceeded');
   SetLength(AYs, L + 1);
   AYs[L] := AY;
 end;
@@ -1353,6 +1416,8 @@ begin
   if PointsAlmostEqual(AP0, AP1) then
     Exit;
   L := Length(AEdges);
+  if L >= 4096 then
+    raise EReadError.Create('EMF Boolean clip edge limit exceeded');
   SetLength(AEdges, L + 1);
   AEdges[L].P0 := AP0;
   AEdges[L].P1 := AP1;
@@ -1368,7 +1433,7 @@ begin
   for I := 0 to High(ACounts) do
   begin
     Count := ACounts[I];
-    if (Count <= 0) or (StartIndex + Count > Length(APoints)) then
+    if (Count <= 0) or (StartIndex > Length(APoints)) or (Count > Length(APoints) - StartIndex) then
       Break;
     if Count >= 2 then
     begin
@@ -1647,6 +1712,8 @@ begin
     if PointCounts[I] < 0 then
       Exit;
 
+    if PointCounts[I] > Length(Points) - StartIndex then
+      Exit;
     Inc(StartIndex, PointCounts[I]);
   end;
 
@@ -1658,7 +1725,7 @@ begin
   if StartIndex < 0 then
     Exit;
 
-  if StartIndex + Count > Length(Points) then
+  if Count > Length(Points) - StartIndex then
     Exit;
 
   SetLength(Result, Count);
@@ -1676,6 +1743,12 @@ begin
   FCurrent := TMetafilePrimitive.Create;
   FPrimitives := TList.Create;
   FStorePrimitives := False;
+  FLimits.MaxRecordBytes := 128 * 1024 * 1024;
+  FLimits.MaxTotalBytes := 512 * 1024 * 1024;
+  FLimits.MaxTotalPoints := 4 * 1024 * 1024;
+  FLimits.MaxArrayElements := 1024 * 1024;
+  FLimits.MaxTextChars := 65536;
+  FLimits.MaxSaveDepth := 1024;
   FFlatness := 0.5;
   FTextFlatness := DEFAULT_TEXT_FLATNESS;
   FOnObjectPlay := nil;
@@ -1705,6 +1778,7 @@ function TMetafileParser.LoadFromMetafile(AMetafile: TMetafile; APlaybackDC: HDC
 var
   R: TRect;
   Playback: HENHMETAFILE;
+  SourceBytes: Cardinal;
 begin
   Result := False;
   FLastError := '';
@@ -1712,6 +1786,12 @@ begin
   if (AMetafile = nil) or AMetafile.Empty then
   begin
     FLastError := SMetafileEmpty;
+    Exit;
+  end;
+  SourceBytes := GetEnhMetaFileBits(AMetafile.Handle,0,nil);
+  if (SourceBytes = 0) or (SourceBytes > FLimits.MaxTotalBytes) then
+  begin
+    FLastError := 'EMF total record byte limit exceeded before handle copy';
     Exit;
   end;
   if APlaybackBounds <> nil then
@@ -1738,6 +1818,7 @@ end;
 function TMetafileParser.LoadFromFile(const AFileName: string): Boolean;
 var
   MF: TMetafile;
+  Stream: TFileStream;
 begin
   Result := False;
   FLastError := '';
@@ -1750,7 +1831,14 @@ begin
   MF := TMetafile.Create;
   try
     try
-      MF.LoadFromFile(AFileName);
+      Stream := TFileStream.Create(AFileName,fmOpenRead or fmShareDenyWrite);
+      try
+        if (Stream.Size < 0) or (UInt64(Stream.Size) > FLimits.MaxTotalBytes) then
+          raise EReadError.Create('EMF total record byte limit exceeded before loading');
+        MF.LoadFromStream(Stream);
+      finally
+        Stream.Free;
+      end;
       Result := LoadFromMetafile(MF);
     except
       on E: Exception do
@@ -1789,6 +1877,8 @@ class function TMetafileParser.CubicBezierToFlatPolyline(const P0, P1, P2, P3: T
     AB, BC, CD, ABC, BCD, ABCD: TMetafilePoint;
     Err: Double;
   begin
+    if Length(Result) >= 65536 then
+      raise EReadError.Create('EMF Bezier point limit exceeded');
     Err := Max(DistancePointToLine(B, A, D), DistancePointToLine(C, A, D));
     if (Err <= ATolerance) or (Depth >= MAX_BEZIER_RECURSION) then
     begin
@@ -1808,7 +1898,7 @@ class function TMetafileParser.CubicBezierToFlatPolyline(const P0, P1, P2, P3: T
   end;
 
 begin
-  if ATolerance <= 0 then
+  if IsNan(ATolerance) or IsInfinite(ATolerance) or (ATolerance <= 0) then
     ATolerance := 0.5;
   SetLength(Result, 0);
   AppendPoint(Result, P0);
@@ -1846,6 +1936,8 @@ end;
 
 procedure TMetafileParser.Reset;
 begin
+  FParsedBytes := 0;
+  FGeneratedPoints := 0;
   ClearStoredPrimitives;
   DCStateOf(Self).Reset;
   PathBuilderOf(Self).Clear;
@@ -1880,13 +1972,13 @@ begin
   FDeviceSizePx := AHeader.szlDevice;
   FDeviceSizeMM := AHeader.szlMillimeters;
   if AHeader.nHandles > 0 then
-    FMaxObjectHandle := Min(Cardinal(AHeader.nHandles) + 1, Cardinal(MAX_EMF_OBJECT_HANDLES))
+    FMaxObjectHandle := Min(Cardinal(AHeader.nHandles), Cardinal(MAX_EMF_OBJECT_HANDLES))
   else
     FMaxObjectHandle := MAX_EMF_OBJECT_HANDLES;
   { The ink bounds do not describe the reference device's physical resolution. }
-  if FDeviceSizeMM.cx > 0 then
+  if (FDeviceSizeMM.cx > 0) and (FDeviceSizePx.cx > 0) then
     FDeviceDpiX := FDeviceSizePx.cx * 25.4 / FDeviceSizeMM.cx;
-  if FDeviceSizeMM.cy > 0 then
+  if (FDeviceSizeMM.cy > 0) and (FDeviceSizePx.cy > 0) then
     FDeviceDpiY := FDeviceSizePx.cy * 25.4 / FDeviceSizeMM.cy;
 end;
 
@@ -1969,8 +2061,29 @@ begin
   PathBuilderOf(Self).Clear;
 end;
 
+procedure TMetafileParser.AccountPoints(Count: NativeUInt);
+begin
+  if FGeneratedPoints > FLimits.MaxTotalPoints then
+    raise EReadError.Create('EMF total generated point limit exceeded');
+  if Count > FLimits.MaxTotalPoints-FGeneratedPoints then
+    raise EReadError.Create('EMF total generated point limit exceeded');
+  Inc(FGeneratedPoints,Count);
+end;
+
+procedure TMetafileParser.SetLimits(const Value: TMetafileLimits);
+begin
+  if (Value.MaxTotalPoints = 0) or (Value.MaxTotalBytes < 88) or (Value.MaxRecordBytes < 88) or (Value.MaxRecordBytes > Cardinal(High(Integer))) or
+    (Value.MaxArrayElements = 0) or (Value.MaxArrayElements > Cardinal(High(Integer))) or
+    (Value.MaxTextChars = 0) or (Value.MaxTextChars > Cardinal(High(Integer) div 8)) or
+    (Value.MaxSaveDepth = 0) or (Value.MaxSaveDepth > Cardinal(High(Integer))) then
+    raise EArgumentException.Create('Invalid EMF resource limits');
+  FLimits := Value;
+end;
+
 procedure TMetafileParser.SaveState;
 begin
+  if Cardinal(Length(DCStateOf(Self).FStateStack)) >= FLimits.MaxSaveDepth then
+    raise EReadError.Create('EMF SaveDC depth limit exceeded');
   DCStateOf(Self).SaveState;
 end;
 
@@ -2038,6 +2151,8 @@ begin
   if Length(FStateStack) = 0 then
     Exit;
 
+  if ARelative = Low(Integer) then
+    Exit;
   if ARelative < 0 then
     CountToPop := -ARelative
   else
@@ -2060,6 +2175,8 @@ end;
 
 function TMetafileParser.RecordArrayAvailable(ARecord: PEnhMetaRecord; AOffset, ACount, AElementSize: NativeUInt): Boolean;
 begin
+  if ACount > FLimits.MaxArrayElements then
+    raise EReadError.Create('EMF array element limit exceeded');
   if AElementSize = 0 then
     Result := RecordBytesAvailable(ARecord, AOffset, 0)
   else
@@ -2086,6 +2203,8 @@ begin
     Result := True;
     Exit;
   end;
+  if ASize > FLimits.MaxRecordBytes then
+    raise EReadError.Create('EMF record allocation limit exceeded');
   if (ASize > NativeUInt(MaxInt)) or not RecordPtr(ARecord, AOffset, ASize, P) then
     Exit;
   SetLength(ABytes, ASize);
@@ -2102,6 +2221,8 @@ begin
   Result := False;
   SetLength(ADx, 0);
   SetLength(ADy, 0);
+  if ANChars > FLimits.MaxTextChars then
+    raise EReadError.Create('EMF text length limit exceeded');
   if (AOffDx = 0) or (ANChars = 0) then
   begin
     Result := True;
@@ -2111,6 +2232,8 @@ begin
   Step := 1;
   if (AOptions and ETO_PDY) <> 0 then
     Step := 2;
+  if ANChars > Cardinal(High(Integer) div (Step * SizeOf(Integer))) then
+    Exit;
   Count := NativeUInt(ANChars) * NativeUInt(Step);
   if not RecordArrayAvailable(ARecord, AOffDx, Count, SizeOf(Integer)) then
     Exit;
@@ -2296,7 +2419,7 @@ end;
 function TMetafileDCState.LogicalToOutput(X, Y: Double): TMetafilePoint;
 var
   Page: TMetafilePoint;
-  Sx, Sy: Double;
+  Sx, Sy, Scale: Double;
 begin
   Page.X := X * State.WorldTransform.eM11 + Y * State.WorldTransform.eM21 + State.WorldTransform.eDx;
   Page.Y := X * State.WorldTransform.eM12 + Y * State.WorldTransform.eM22 + State.WorldTransform.eDy;
@@ -2340,6 +2463,13 @@ begin
         Sx := State.ViewportExt.cx / State.WindowExt.cx;
       if State.WindowExt.cy <> 0 then
         Sy := State.ViewportExt.cy / State.WindowExt.cy;
+      if State.MapMode = MM_ISOTROPIC then
+      begin
+        { Retain the requested extents: later ScaleWindow/ViewportExt records use them. }
+        Scale := Min(Abs(Sx) / FDeviceDpiX, Abs(Sy) / FDeviceDpiY);
+        Sx := Sign(Sx) * Max(1, Round(Abs(Double(State.WindowExt.cx)) * Scale * FDeviceDpiX)) / Abs(Double(State.WindowExt.cx));
+        Sy := Sign(Sy) * Max(1, Round(Abs(Double(State.WindowExt.cy)) * Scale * FDeviceDpiY)) / Abs(Double(State.WindowExt.cy));
+      end;
       Result.X := (Page.X - State.WindowOrg.X) * Sx + State.ViewportOrg.X;
       Result.Y := (Page.Y - State.WindowOrg.Y) * Sy + State.ViewportOrg.Y;
     end;
@@ -2746,6 +2876,8 @@ procedure TMetafilePathBuilder.CloseFigure;
 var
   L: Integer;
 begin
+  if not FRecording then
+    Exit;
   L := Length(FContours);
   if L = 0 then
     Exit;
@@ -2754,7 +2886,7 @@ begin
     AppendPoint(FContours[L - 1].Points, FContours[L - 1].Points[0]);
 end;
 
-function RegionDataToPolygons(AData: Pointer; ASize: NativeUInt; ADCState: TMetafileDCState; out APoints: TMetafilePointArray; out ACounts: TMetafileIntegerArray): Boolean;
+function RegionDataToPolygons(AData: Pointer; ASize: NativeUInt; ADCState: TMetafileDCState; AMaxPoints: Cardinal; out APoints: TMetafilePointArray; out ACounts: TMetafileIntegerArray): Boolean;
 var
   Header: PRgnDataHeader;
   Rects: PRectArray;
@@ -2771,7 +2903,11 @@ begin
   Header := PRgnDataHeader(AData);
   if (Header.dwSize <> SizeOf(TRgnDataHeader)) or (Header.iType <> RDH_RECTANGLES) then
     Exit;
-  if ASize < SizeOf(TRgnDataHeader) + NativeUInt(Header.nCount) * SizeOf(TRect) then
+  if (Header.nCount > AMaxPoints div 5) or
+    (NativeUInt(Header.nCount) > (ASize - SizeOf(TRgnDataHeader)) div SizeOf(TRect)) then
+    Exit;
+  if (Header.nRgnSize <> NativeUInt(Header.nCount) * SizeOf(TRect)) or
+    (Header.nRgnSize > ASize - SizeOf(TRgnDataHeader)) then
     Exit;
 
   Rects := PRectArray(PtrOffset(AData, SizeOf(TRgnDataHeader)));
@@ -3060,6 +3196,7 @@ var
   end;
 
 begin
+  AccountPoints(Length(APoints));
   Stroke := CurrentStroke;
   Stroke.Visible := Stroke.Visible and AUseStroke;
   Fill := CurrentFill;
@@ -3107,6 +3244,7 @@ end;
 procedure TMetafileParser.EmitImagePrimitive(const APoints: TMetafilePointArray; const APointCounts: TMetafileIntegerArray; const AImage: TMetafileImageStyle; ARecordType: Cardinal;
   const ARecordName: string);
 begin
+  AccountPoints(Length(APoints));
   FCurrent.Kind := mpkImage;
   FCurrent.Points := CopyPoints(APoints);
   FCurrent.PointCounts := CopyCounts(APointCounts);
@@ -3193,7 +3331,7 @@ begin
 
   SetLength(Points, Integer(R.cptl));
   for I := 0 to Integer(R.cptl) - 1 do
-    Points[I] := LogicalToOutput(R.aptl[I]);
+    Points[I] := LogicalToOutput(PPointArray(@R.aptl[0])^[I]);
   if AClosed and (Length(Points) > 1) and not PointsAlmostEqual(Points[0], Points[High(Points)]) then
     AppendPoint(Points, Points[0]);
   SetLength(Counts, 1);
@@ -3223,7 +3361,7 @@ begin
 
   SetLength(Points, Integer(R.cpts));
   for I := 0 to Integer(R.cpts) - 1 do
-    Points[I] := LogicalToOutput(R.apts[I].X, R.apts[I].Y);
+    Points[I] := LogicalToOutput(PSmallPointArray(@R.apts[0])^[I].X, PSmallPointArray(@R.apts[0])^[I].Y);
   if AClosed and (Length(Points) > 1) and not PointsAlmostEqual(Points[0], Points[High(Points)]) then
     AppendPoint(Points, Points[0]);
   SetLength(Counts, 1);
@@ -3272,6 +3410,8 @@ begin
   if not RecordArrayAvailable(ARecord, PointsOffset, TotalNative, SizeOf(TPoint)) then
     Exit;
   Pts := PPointArray(PtrOffset(ARecord, PointsOffset));
+  if AClosed and (R.nPolys > Cardinal(MaxInt - Total)) then
+    Exit;
   SetLength(Points, Total + Ord(AClosed) * Integer(R.nPolys));
   InputTotal := 0;
   OutputTotal := 0;
@@ -3337,6 +3477,8 @@ begin
   if not RecordArrayAvailable(ARecord, PointsOffset, TotalNative, SizeOf(TSmallPoint)) then
     Exit;
   Pts := PSmallPointArray(PtrOffset(ARecord, PointsOffset));
+  if AClosed and (R.nPolys > Cardinal(MaxInt - Total)) then
+    Exit;
   SetLength(Points, Total + Ord(AClosed) * Integer(R.nPolys));
   InputTotal := 0;
   OutputTotal := 0;
@@ -3487,7 +3629,7 @@ begin
   SetLength(Points, Integer(R.cptl) + 1);
   Points[0] := LogicalToOutput(DCStateOf(Self).State.CurrentPos);
   for I := 0 to Integer(R.cptl) - 1 do
-    Points[I + 1] := LogicalToOutput(R.aptl[I]);
+    Points[I + 1] := LogicalToOutput(PPointArray(@R.aptl[0])^[I]);
   SetLength(Counts, 1);
   Counts[0] := Length(Points);
   if PathBuilderOf(Self).Recording then
@@ -3495,7 +3637,7 @@ begin
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
   if R.cptl > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X, R.aptl[R.cptl - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(PPointArray(@R.aptl[0])^[R.cptl - 1].X, PPointArray(@R.aptl[0])^[R.cptl - 1].Y);
 end;
 
 procedure TMetafileParser.HandlePolylineTo16(ARecord: PEnhMetaRecord);
@@ -3516,7 +3658,7 @@ begin
   SetLength(Points, Integer(R.cpts) + 1);
   Points[0] := LogicalToOutput(DCStateOf(Self).State.CurrentPos);
   for I := 0 to Integer(R.cpts) - 1 do
-    Points[I + 1] := LogicalToOutput(R.apts[I].X, R.apts[I].Y);
+    Points[I + 1] := LogicalToOutput(PSmallPointArray(@R.apts[0])^[I].X, PSmallPointArray(@R.apts[0])^[I].Y);
   SetLength(Counts, 1);
   Counts[0] := Length(Points);
   if PathBuilderOf(Self).Recording then
@@ -3524,7 +3666,7 @@ begin
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
   if R.cpts > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.apts[R.cpts - 1].X, R.apts[R.cpts - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(PSmallPointArray(@R.apts[0])^[R.cpts - 1].X, PSmallPointArray(@R.apts[0])^[R.cpts - 1].Y);
 end;
 
 procedure TMetafileParser.HandlePolyDraw32(ARecord: PEnhMetaRecord);
@@ -3569,13 +3711,13 @@ begin
     if (Types^ and PT_MOVETO) = PT_MOVETO then
     begin
       FlushCurrent(False);
-      AppendPoint(Current, LogicalToOutput(R.aptl[I]));
+      AppendPoint(Current, LogicalToOutput(PPointArray(@R.aptl[0])^[I]));
     end
     else if (Types^ and PT_LINETO) = PT_LINETO then
     begin
       if Length(Current) = 0 then
         AppendPoint(Current, LogicalToOutput(DCStateOf(Self).State.CurrentPos));
-      AppendPoint(Current, LogicalToOutput(R.aptl[I]));
+      AppendPoint(Current, LogicalToOutput(PPointArray(@R.aptl[0])^[I]));
     end
     else if (Types^ and PT_BEZIERTO) = PT_BEZIERTO then
     begin
@@ -3585,9 +3727,9 @@ begin
       begin
         SetLength(Segment, 4);
         Segment[0] := Current[High(Current)];
-        Segment[1] := LogicalToOutput(R.aptl[I]);
-        Segment[2] := LogicalToOutput(R.aptl[I + 1]);
-        Segment[3] := LogicalToOutput(R.aptl[I + 2]);
+        Segment[1] := LogicalToOutput(PPointArray(@R.aptl[0])^[I]);
+        Segment[2] := LogicalToOutput(PPointArray(@R.aptl[0])^[I + 1]);
+        Segment[3] := LogicalToOutput(PPointArray(@R.aptl[0])^[I + 2]);
         Flat := CubicBezierToFlatPolyline(Segment[0], Segment[1], Segment[2], Segment[3], FFlatness);
         AppendPoints(Current, Flat, True);
         BezierLeft := 2;
@@ -3607,7 +3749,7 @@ begin
   end;
   FlushCurrent(False);
   if R.cptl > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.aptl[R.cptl - 1].X, R.aptl[R.cptl - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(PPointArray(@R.aptl[0])^[R.cptl - 1].X, PPointArray(@R.aptl[0])^[R.cptl - 1].Y);
 end;
 
 procedure TMetafileParser.HandlePolyDraw16(ARecord: PEnhMetaRecord);
@@ -3621,7 +3763,7 @@ var
 
   function P16(AIndex: Integer): TMetafilePoint;
   begin
-    Result := LogicalToOutput(R.apts[AIndex].X, R.apts[AIndex].Y);
+    Result := LogicalToOutput(PSmallPointArray(@R.apts[0])^[AIndex].X, PSmallPointArray(@R.apts[0])^[AIndex].Y);
   end;
 
   procedure FlushCurrent(AClosed: Boolean);
@@ -3695,7 +3837,7 @@ begin
   end;
   FlushCurrent(False);
   if R.cpts > 0 then
-    DCStateOf(Self).State.NextPos := IntPoint(R.apts[R.cpts - 1].X, R.apts[R.cpts - 1].Y);
+    DCStateOf(Self).State.NextPos := IntPoint(PSmallPointArray(@R.apts[0])^[R.cpts - 1].X, PSmallPointArray(@R.apts[0])^[R.cpts - 1].Y);
 end;
 
 procedure TMetafileParser.HandleLineTo(ARecord: PEnhMetaRecord);
@@ -3762,10 +3904,10 @@ var
   cx, cy, Rx, Ry, A: Double;
 begin
   R := PEMREllipse(ARecord);
-  cx := (R.rclBox.Left + R.rclBox.Right) * 0.5;
-  cy := (R.rclBox.Top + R.rclBox.Bottom) * 0.5;
-  Rx := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
-  Ry := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
+  cx := (Double(R.rclBox.Left) + R.rclBox.Right) * 0.5;
+  cy := (Double(R.rclBox.Top) + R.rclBox.Bottom) * 0.5;
+  Rx := Abs(Double(R.rclBox.Right) - R.rclBox.Left) * 0.5;
+  Ry := Abs(Double(R.rclBox.Bottom) - R.rclBox.Top) * 0.5;
   SetLength(Points, DEFAULT_ELLIPSE_SEGMENTS + 1);
   for I := 0 to DEFAULT_ELLIPSE_SEGMENTS do
   begin
@@ -3836,10 +3978,10 @@ var
   IsClosedShape: Boolean;
 begin
   R := PEMRArc(ARecord);
-  cx := (R.rclBox.Left + R.rclBox.Right) * 0.5;
-  cy := (R.rclBox.Top + R.rclBox.Bottom) * 0.5;
-  Rx := Abs(R.rclBox.Right - R.rclBox.Left) * 0.5;
-  Ry := Abs(R.rclBox.Bottom - R.rclBox.Top) * 0.5;
+  cx := (Double(R.rclBox.Left) + R.rclBox.Right) * 0.5;
+  cy := (Double(R.rclBox.Top) + R.rclBox.Bottom) * 0.5;
+  Rx := Abs(Double(R.rclBox.Right) - R.rclBox.Left) * 0.5;
+  Ry := Abs(Double(R.rclBox.Bottom) - R.rclBox.Top) * 0.5;
   if (Rx <= 0) or (Ry <= 0) then
     Exit;
 
@@ -3901,13 +4043,23 @@ var
   Points: TMetafilePointArray;
   Counts: TMetafileIntegerArray;
   I, N: Integer;
-  A0, Sweep, A: Double;
+  A0, Sweep, A, Segments, EndX, EndY: Double;
   EndLogical: TPoint;
 begin
   R := PEMRAngleArcLocal(ARecord);
   A0 := DegToRad(R.eStartAngle);
   Sweep := DegToRad(R.eSweepAngle);
-  N := Max(4, Round(Abs(Sweep) / (2 * Pi) * DEFAULT_ARC_SEGMENTS));
+  Segments := Abs(Sweep) / (2 * Pi) * DEFAULT_ARC_SEGMENTS;
+  if IsNan(A0) or IsInfinite(A0) or IsNan(Sweep) or IsInfinite(Sweep) or
+    (Segments > Min(FLimits.MaxArrayElements-1,1048575)) then
+    raise EReadError.Create('Invalid or excessive EMF angle arc');
+  N := Max(4, Round(Segments));
+  EndX := R.ptlCenter.X + Cos(A0 + Sweep) * R.nRadius;
+  EndY := R.ptlCenter.Y - Sin(A0 + Sweep) * R.nRadius;
+  if (EndX < Low(Integer)) or (EndX > High(Integer)) or
+    (EndY < Low(Integer)) or (EndY > High(Integer)) then
+    raise EReadError.Create('EMF angle arc endpoint is out of range');
+  EndLogical := IntPoint(Round(EndX),Round(EndY));
   SetLength(Points, N + 1);
   for I := 0 to N do
   begin
@@ -3920,8 +4072,6 @@ begin
     AppendPathOpenPolyline(Points)
   else
     EmitPrimitive(mpkPolyline, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), True, False);
-  EndLogical.X := Round(R.ptlCenter.X + Cos(A0 + Sweep) * R.nRadius);
-  EndLogical.Y := Round(R.ptlCenter.Y - Sin(A0 + Sweep) * R.nRadius);
   DCStateOf(Self).State.NextPos := EndLogical;
 end;
 
@@ -3943,6 +4093,8 @@ var
   TextBounds: TMetafileRect;
 begin
   R := PEMRExtTextOut(ARecord);
+  if R.emrtext.nChars > FLimits.MaxTextChars then
+    raise EReadError.Create('EMF text length limit exceeded');
   GlyphPtr := nil;
   GlyphCount := 0;
 
@@ -4010,6 +4162,8 @@ var
   EmptyDx, EmptyDy: TMetafileIntegerArray;
 begin
   R := PEMRSmallTextOutLocal(ARecord);
+  if R.nChars > FLimits.MaxTextChars then
+    raise EReadError.Create('EMF text length limit exceeded');
   if (R.nChars = 0) or (R.nChars > Cardinal(MaxInt)) then
     Exit;
 
@@ -4114,7 +4268,9 @@ begin
     Exit;
   for I := 0 to R.cStrings - 1 do
   begin
-    TextRecord := @R.aemrtext[I];
+    TextRecord := @PEMRTextLocal(@R.aemrtext[0])[I];
+    if TextRecord.nChars > FLimits.MaxTextChars then
+      raise EReadError.Create('EMF text length limit exceeded');
     GlyphPtr := nil;
     GlyphCount := 0;
     if AWide or ((TextRecord.fOptions and ETO_GLYPH_INDEX) <> 0) then
@@ -4187,7 +4343,7 @@ begin
     DataSize := RFrame.cbRgnData;
     if not RecordArrayAvailable(ARecord, NativeUInt(DataPtr) - NativeUInt(ARecord), DataSize, SizeOf(Byte)) then
       Exit;
-    if not RegionDataToPolygons(DataPtr, DataSize, DCStateOf(Self), Points, Counts) then
+    if not RegionDataToPolygons(DataPtr, DataSize, DCStateOf(Self), FLimits.MaxArrayElements, Points, Counts) then
       Exit;
 
     OldFill := DCStateOf(Self).State.Fill;
@@ -4211,7 +4367,7 @@ begin
     DataSize := RFill.cbRgnData;
     if not RecordArrayAvailable(ARecord, NativeUInt(DataPtr) - NativeUInt(ARecord), DataSize, SizeOf(Byte)) then
       Exit;
-    if not RegionDataToPolygons(DataPtr, DataSize, DCStateOf(Self), Points, Counts) then
+    if not RegionDataToPolygons(DataPtr, DataSize, DCStateOf(Self), FLimits.MaxArrayElements, Points, Counts) then
       Exit;
 
     OldFill := DCStateOf(Self).State.Fill;
@@ -4235,7 +4391,7 @@ begin
   DataPtr := @R.RgnData[0];
   if not RecordArrayAvailable(ARecord, NativeUInt(DataPtr) - NativeUInt(ARecord), R.cbRgnData, SizeOf(Byte)) then
     Exit;
-  if RegionDataToPolygons(DataPtr, R.cbRgnData, DCStateOf(Self), Points, Counts) then
+  if RegionDataToPolygons(DataPtr, R.cbRgnData, DCStateOf(Self), FLimits.MaxArrayElements, Points, Counts) then
     EmitPrimitive(mpkPolygon, Points, Counts, '', ARecord.iType, RecordName(ARecord.iType), False, True);
 end;
 
@@ -4257,7 +4413,7 @@ begin
   DataPtr := @R.RgnData[0];
   if not RecordArrayAvailable(ARecord, NativeUInt(DataPtr) - NativeUInt(ARecord), R.cbRgnData, SizeOf(Byte)) then
     Exit;
-  if RegionDataToPolygons(DataPtr, R.cbRgnData, DCStateOf(Self), Points, Counts) then
+  if RegionDataToPolygons(DataPtr, R.cbRgnData, DCStateOf(Self), FLimits.MaxArrayElements, Points, Counts) then
     DCStateOf(Self).SetClipRegion(Points, Counts, R.iMode);
 end;
 
@@ -4333,6 +4489,29 @@ begin
   VertOffset := NativeUInt(@R.Ver[0]) - NativeUInt(ARecord);
   if not RecordArrayAvailable(ARecord, VertOffset, R.nVer, SizeOf(TTriVertex)) then
     Exit;
+  Mode := R.ulMode;
+  if not (Mode in [GRADIENT_FILL_RECT_H, GRADIENT_FILL_RECT_V, GRADIENT_FILL_TRIANGLE]) then
+    Exit;
+  MeshOffset := VertOffset + NativeUInt(R.nVer) * SizeOf(TTriVertex);
+  if Mode = GRADIENT_FILL_TRIANGLE then
+  begin
+    if not RecordArrayAvailable(ARecord, MeshOffset, R.nTri, SizeOf(TGradientTriangle)) then
+      Exit;
+    GradTris := PGradientTriangleArray(PtrOffset(ARecord, MeshOffset));
+    for I := 0 to Integer(R.nTri) - 1 do
+      if (GradTris[I].Vertex1 >= R.nVer) or (GradTris[I].Vertex2 >= R.nVer) or
+        (GradTris[I].Vertex3 >= R.nVer) then
+        Exit;
+  end
+  else
+  begin
+    if not RecordArrayAvailable(ARecord, MeshOffset, R.nTri, SizeOf(TGradientRect)) then
+      Exit;
+    GradRects := PGradientRectArray(PtrOffset(ARecord, MeshOffset));
+    for I := 0 to Integer(R.nTri) - 1 do
+      if (GradRects[I].UpperLeft >= R.nVer) or (GradRects[I].LowerRight >= R.nVer) then
+        Exit;
+  end;
   Verts := PTriVertexArray(@R.Ver[0]);
 
   Fill := CurrentFill;
@@ -4417,9 +4596,9 @@ var
   begin
     AData.Usage := AUsage;
     if not ReadRecordBytes(ARecord, AOffBmi, ACbBmi, AData.BitmapInfo) then
-      SetLength(AData.BitmapInfo, 0);
+      raise EReadError.Create('Invalid EMF bitmap info section');
     if not ReadRecordBytes(ARecord, AOffBits, ACbBits, AData.Bits) then
-      SetLength(AData.Bits, 0);
+      raise EReadError.Create('Invalid EMF bitmap pixel section');
     NormalizeMetafileDIB(AData.BitmapInfo, AData.Bits, AUsage);
   end;
 
@@ -4427,9 +4606,9 @@ var
   begin
     SetLength(Points, 5);
     Points[0] := LogicalToOutput(AX, AY);
-    Points[1] := LogicalToOutput(AX + ACX, AY);
-    Points[2] := LogicalToOutput(AX + ACX, AY + ACY);
-    Points[3] := LogicalToOutput(AX, AY + ACY);
+    Points[1] := LogicalToOutput(Double(AX) + ACX, AY);
+    Points[2] := LogicalToOutput(Double(AX) + ACX, Double(AY) + ACY);
+    Points[3] := LogicalToOutput(AX, Double(AY) + ACY);
     Points[4] := Points[0];
     SetLength(Counts, 1);
     Counts[0] := Length(Points);
@@ -4439,14 +4618,14 @@ var
 
   procedure SetParallelogramGeometry(const AP0, AP1, AP2: {$IFDEF FPC}POINTL{$ELSE}TPoint{$ENDIF});
   var
-    P3: TPoint;
+    P3: TMetafilePoint;
   begin
-    P3.X := AP1.X + AP2.X - AP0.X;
-    P3.Y := AP1.Y + AP2.Y - AP0.Y;
+    P3.X := Double(AP1.X) + AP2.X - AP0.X;
+    P3.Y := Double(AP1.Y) + AP2.Y - AP0.Y;
     SetLength(Points, 5);
     Points[0] := LogicalToOutput(AP0);
     Points[1] := LogicalToOutput(AP1);
-    Points[2] := LogicalToOutput(P3);
+    Points[2] := LogicalToOutput(P3.X, P3.Y);
     Points[3] := LogicalToOutput(AP2);
     Points[4] := Points[0];
     SetLength(Counts, 1);
@@ -4459,8 +4638,8 @@ var
   begin
     Image.SrcRect.Left := AX;
     Image.SrcRect.Top := AY;
-    Image.SrcRect.Right := AX + ACX;
-    Image.SrcRect.Bottom := AY + ACY;
+    Image.SrcRect.Right := Double(AX) + ACX;
+    Image.SrcRect.Bottom := Double(AY) + ACY;
   end;
 
   procedure SetRasterOperation(AKind: TMetafileRasterOperationKind; AOperation: Cardinal);
@@ -4507,7 +4686,7 @@ begin
         SetRectGeometry(BitBlt.xDest, BitBlt.yDest, BitBlt.cxDest, BitBlt.cyDest);
         SetSrcRect(BitBlt.xSrc, BitBlt.ySrc, BitBlt.cxDest, BitBlt.cyDest);
         SetRasterOperation(mrokRop3, BitBlt.dwRop);
-        Image.BkColorSrc := BitBlt.crBkColorSrc;
+        Image.BkColorSrc := TColor(BitBlt.crBkColorSrc);
         Image.XForm := BitBlt.xformSrc;
         SetImageData(Image.Image, BitBlt.iUsageSrc, BitBlt.offBmiSrc, BitBlt.cbBmiSrc, BitBlt.offBitsSrc, BitBlt.cbBitsSrc);
       end;
@@ -4517,7 +4696,7 @@ begin
         SetRectGeometry(StretchBlt.xDest, StretchBlt.yDest, StretchBlt.cxDest, StretchBlt.cyDest);
         SetSrcRect(StretchBlt.xSrc, StretchBlt.ySrc, StretchBlt.cxSrc, StretchBlt.cySrc);
         SetRasterOperation(mrokRop3, StretchBlt.dwRop);
-        Image.BkColorSrc := StretchBlt.crBkColorSrc;
+        Image.BkColorSrc := TColor(StretchBlt.crBkColorSrc);
         Image.XForm := StretchBlt.xformSrc;
         SetImageData(Image.Image, StretchBlt.iUsageSrc, StretchBlt.offBmiSrc, StretchBlt.cbBmiSrc, StretchBlt.offBitsSrc, StretchBlt.cbBitsSrc);
       end;
@@ -4535,7 +4714,7 @@ begin
         SetRectGeometry(MaskBlt.xDest, MaskBlt.yDest, MaskBlt.cxDest, MaskBlt.cyDest);
         SetSrcRect(MaskBlt.xSrc, MaskBlt.ySrc, MaskBlt.cxDest, MaskBlt.cyDest);
         SetRasterOperation(mrokRop4, MaskBlt.dwRop);
-        Image.BkColorSrc := MaskBlt.crBkColorSrc;
+        Image.BkColorSrc := TColor(MaskBlt.crBkColorSrc);
         Image.XForm := MaskBlt.xformSrc;
         Image.MaskOrigin := IntPoint(MaskBlt.xMask, MaskBlt.yMask);
         SetImageData(Image.Image, MaskBlt.iUsageSrc, MaskBlt.offBmiSrc, MaskBlt.cbBmiSrc, MaskBlt.offBitsSrc, MaskBlt.cbBitsSrc);
@@ -4557,7 +4736,7 @@ begin
         SetRectGeometry(AlphaBlend.xDest, AlphaBlend.yDest, AlphaBlend.cxDest, AlphaBlend.cyDest);
         SetSrcRect(AlphaBlend.xSrc, AlphaBlend.ySrc, AlphaBlend.cxSrc, AlphaBlend.cySrc);
         SetAlphaBlendOperation(AlphaBlend.dwRop);
-        Image.BkColorSrc := AlphaBlend.crBkColorSrc;
+        Image.BkColorSrc := TColor(AlphaBlend.crBkColorSrc);
         Image.XForm := AlphaBlend.xformSrc;
         SetImageData(Image.Image, AlphaBlend.iUsageSrc, AlphaBlend.offBmiSrc, AlphaBlend.cbBmiSrc, AlphaBlend.offBitsSrc, AlphaBlend.cbBitsSrc);
       end;
@@ -4567,7 +4746,7 @@ begin
         SetRectGeometry(TransparentBlt.xDest, TransparentBlt.yDest, TransparentBlt.cxDest, TransparentBlt.cyDest);
         SetSrcRect(TransparentBlt.xSrc, TransparentBlt.ySrc, TransparentBlt.cxSrc, TransparentBlt.cySrc);
         SetRasterOperation(mrokTransparent, TransparentBlt.dwRop);
-        Image.BkColorSrc := TransparentBlt.crBkColorSrc;
+        Image.BkColorSrc := TColor(TransparentBlt.crBkColorSrc);
         Image.TransparentColor := TColor(TransparentBlt.dwRop and $00FFFFFF);
         Image.XForm := TransparentBlt.xformSrc;
         SetImageData(Image.Image, TransparentBlt.iUsageSrc, TransparentBlt.offBmiSrc, TransparentBlt.cbBmiSrc, TransparentBlt.offBitsSrc, TransparentBlt.cbBitsSrc);
@@ -4578,7 +4757,7 @@ begin
         SetParallelogramGeometry(PlgBlt.aptlDest[0], PlgBlt.aptlDest[1], PlgBlt.aptlDest[2]);
         SetSrcRect(PlgBlt.xSrc, PlgBlt.ySrc, PlgBlt.cxSrc, PlgBlt.cySrc);
         SetRasterOperation(mrokPlgBlt, SRCCOPY);
-        Image.BkColorSrc := PlgBlt.crBkColorSrc;
+        Image.BkColorSrc := TColor(PlgBlt.crBkColorSrc);
         Image.XForm := PlgBlt.xformSrc;
         Image.MaskOrigin := IntPoint(PlgBlt.xMask, PlgBlt.yMask);
         SetImageData(Image.Image, PlgBlt.iUsageSrc, PlgBlt.offBmiSrc, PlgBlt.cbBmiSrc, PlgBlt.offBitsSrc, PlgBlt.cbBitsSrc);
@@ -4645,7 +4824,7 @@ begin
   Obj.Active := True;
   Obj.Kind := mokPen;
   Obj.Stroke.Visible := (R.lopn.lopnStyle and PS_STYLE_MASK_LOCAL) <> PS_NULL;
-  Obj.Stroke.Color := R.lopn.lopnColor;
+  Obj.Stroke.Color := TColor(R.lopn.lopnColor);
   Obj.Stroke.Hairline := R.lopn.lopnWidth.X = 0;
   Obj.Stroke.Width := R.lopn.lopnWidth.X;
   if Obj.Stroke.Width <= 0 then
@@ -4667,7 +4846,7 @@ begin
   Obj.Active := True;
   Obj.Kind := mokPen;
   Obj.Stroke.Visible := (R.elp.elpPenStyle and PS_STYLE_MASK_LOCAL) <> PS_NULL;
-  Obj.Stroke.Color := R.elp.elpColor;
+  Obj.Stroke.Color := TColor(R.elp.elpColor);
   Obj.Stroke.Hairline := (R.elp.elpPenStyle and PS_GEOMETRIC) = 0;
   Obj.Stroke.Width := R.elp.elpWidth;
   if Obj.Stroke.Width <= 0 then
@@ -4701,7 +4880,7 @@ begin
   Obj.Active := True;
   Obj.Kind := mokBrush;
   Obj.Fill.Visible := (R.lb.lbStyle <> BS_NULL);
-  Obj.Fill.Color := R.lb.lbColor;
+  Obj.Fill.Color := TColor(R.lb.lbColor);
   Obj.Fill.Style := R.lb.lbStyle;
   Obj.Fill.Hatch := R.lb.lbHatch;
   Obj.Fill.FillMode := DCStateOf(Self).State.PolyFillMode;
@@ -4782,11 +4961,15 @@ end;
 
 procedure TMetafileParser.HandleSetMapMode(ARecord: PEnhMetaRecord);
 begin
-  DCStateOf(Self).State.MapMode := PEMRSetLong(ARecord).Value;
+  if (PEMRSetLong(ARecord).Value < MM_TEXT) or (PEMRSetLong(ARecord).Value > MM_ANISOTROPIC) then
+    raise EReadError.Create('Invalid EMF mapping mode');
+  DCStateOf(Self).State.MapMode := Integer(PEMRSetLong(ARecord).Value);
 end;
 
 procedure TMetafileParser.HandleSetWindowExt(ARecord: PEnhMetaRecord);
 begin
+  if (PEMRSetSize(ARecord).Size.cx = 0) or (PEMRSetSize(ARecord).Size.cy = 0) then
+    Exit;
   DCStateOf(Self).State.WindowExt := PEMRSetSize(ARecord).Size;
 end;
 
@@ -4797,6 +4980,8 @@ end;
 
 procedure TMetafileParser.HandleSetViewportExt(ARecord: PEnhMetaRecord);
 begin
+  if (PEMRSetSize(ARecord).Size.cx = 0) or (PEMRSetSize(ARecord).Size.cy = 0) then
+    Exit;
   DCStateOf(Self).State.ViewportExt := PEMRSetSize(ARecord).Size;
 end;
 
@@ -4805,32 +4990,59 @@ begin
   DCStateOf(Self).State.ViewportOrg := PEMRSetPoint(ARecord).Point;
 end;
 
+function TryScaleMetafileExtent(Value, Numerator, Denominator: Integer; out Scaled: Integer): Boolean;
+var
+  Candidate: Int64;
+begin
+  Result := False;
+  if (Numerator = 0) or (Denominator = 0) then
+    Exit;
+  Candidate := Round(Double(Value) * Numerator / Denominator);
+  if (Candidate = 0) or (Candidate < Low(Integer)) or (Candidate > High(Integer)) then
+    Exit;
+  Scaled := Integer(Candidate);
+  Result := True;
+end;
+
 procedure TMetafileParser.HandleScaleWindowExt(ARecord: PEnhMetaRecord);
 var
   R: PEMRScaleExt;
+  NewX, NewY: Integer;
 begin
   R := PEMRScaleExt(ARecord);
-  if (R.xDenom <> 0) and (R.yDenom <> 0) then
+  if TryScaleMetafileExtent(DCStateOf(Self).State.WindowExt.cx, R.xNum, R.xDenom, NewX) and
+    TryScaleMetafileExtent(DCStateOf(Self).State.WindowExt.cy, R.yNum, R.yDenom, NewY) then
   begin
-    DCStateOf(Self).State.WindowExt.cx := Round(DCStateOf(Self).State.WindowExt.cx * R.xNum / R.xDenom);
-    DCStateOf(Self).State.WindowExt.cy := Round(DCStateOf(Self).State.WindowExt.cy * R.yNum / R.yDenom);
+    DCStateOf(Self).State.WindowExt.cx := NewX;
+    DCStateOf(Self).State.WindowExt.cy := NewY;
   end;
 end;
 
 procedure TMetafileParser.HandleScaleViewportExt(ARecord: PEnhMetaRecord);
 var
   R: PEMRScaleExt;
+  NewX, NewY: Integer;
 begin
   R := PEMRScaleExt(ARecord);
-  if (R.xDenom <> 0) and (R.yDenom <> 0) then
+  if TryScaleMetafileExtent(DCStateOf(Self).State.ViewportExt.cx, R.xNum, R.xDenom, NewX) and
+    TryScaleMetafileExtent(DCStateOf(Self).State.ViewportExt.cy, R.yNum, R.yDenom, NewY) then
   begin
-    DCStateOf(Self).State.ViewportExt.cx := Round(DCStateOf(Self).State.ViewportExt.cx * R.xNum / R.xDenom);
-    DCStateOf(Self).State.ViewportExt.cy := Round(DCStateOf(Self).State.ViewportExt.cy * R.yNum / R.yDenom);
+    DCStateOf(Self).State.ViewportExt.cx := NewX;
+    DCStateOf(Self).State.ViewportExt.cy := NewY;
   end;
+end;
+
+procedure ValidateMetafileTransform(const X: TXForm);
+begin
+  if IsNan(X.eM11) or IsInfinite(X.eM11) or IsNan(X.eM12) or IsInfinite(X.eM12) or
+    IsNan(X.eM21) or IsInfinite(X.eM21) or IsNan(X.eM22) or IsInfinite(X.eM22) or
+    IsNan(X.eDx) or IsInfinite(X.eDx) or IsNan(X.eDy) or IsInfinite(X.eDy) then
+    raise EReadError.Create('Non-finite EMF world transform');
 end;
 
 procedure TMetafileParser.HandleSetWorldTransform(ARecord: PEnhMetaRecord);
 begin
+  ValidateMetafileTransform(PEMRWorldTransformLocal(ARecord).XForm);
   DCStateOf(Self).State.WorldTransform := PEMRWorldTransformLocal(ARecord).XForm;
 end;
 
@@ -4839,6 +5051,8 @@ var
   R: PEMRModifyWorldTransformLocal;
 begin
   R := PEMRModifyWorldTransformLocal(ARecord);
+  if R.iMode <> MWT_IDENTITY then
+    ValidateMetafileTransform(R.XForm);
   case R.iMode of
     MWT_IDENTITY:
       DCStateOf(Self).State.WorldTransform := XFormIdentity;
@@ -4853,12 +5067,12 @@ end;
 
 procedure TMetafileParser.HandleSetColorText(ARecord: PEnhMetaRecord);
 begin
-  DCStateOf(Self).State.TextColor := PEMRSetTextColor(ARecord).crColor;
+  DCStateOf(Self).State.TextColor := TColor(PEMRSetTextColor(ARecord).crColor);
 end;
 
 procedure TMetafileParser.HandleSetBkColor(ARecord: PEnhMetaRecord);
 begin
-  DCStateOf(Self).State.BkColor := PEMRSetTextColor(ARecord).crColor;
+  DCStateOf(Self).State.BkColor := TColor(PEMRSetTextColor(ARecord).crColor);
 end;
 
 procedure TMetafileParser.HandleSetBkMode(ARecord: PEnhMetaRecord);
@@ -5136,7 +5350,7 @@ var
   GlyphBuf: Pointer;
   PenX, PenY: Double;
   OutlineLogFont, DefaultFont: TLogFontW;
-  OriginalHeight: Integer;
+  OriginalHeight, OutlineWidth: Double;
   ScaleX, ScaleY: Double;
   Angle, SinAngle, CosAngle: Double;
 
@@ -5184,6 +5398,8 @@ var
       PH := PTTPolygonHeader(P);
       if (PH.dwType <> TT_POLYGON_TYPE) or (PH.cb < DWORD(SizeOf(TTPolygonHeader))) then
         Break;
+      if PH.cb > NativeUInt(EndP) - NativeUInt(P) then
+        raise EReadError.Create('Invalid native glyph contour size');
       PolyEnd := PByte(PtrOffset(PH, PH.cb));
       if NativeUInt(PolyEnd) > NativeUInt(EndP) then
         Break;
@@ -5202,21 +5418,21 @@ var
         case PC.wType of
           TT_PRIM_LINE:
             for J := 0 to PC.cpfx - 1 do
-              AppendPoint(Current, GlyphPoint(PC.apfx[J]));
+              AppendPoint(Current, GlyphPoint(PPointFX(@PC.apfx[0])[J]));
           TT_PRIM_QSPLINE:
             begin
               for J := 0 to PC.cpfx - 2 do
               begin
                 P0 := Current[High(Current)];
-                P1 := GlyphPoint(PC.apfx[J]);
+                P1 := GlyphPoint(PPointFX(@PC.apfx[0])[J]);
                 if J < PC.cpfx - 2 then
                 begin
-                  P2 := GlyphPoint(PC.apfx[J + 1]);
+                  P2 := GlyphPoint(PPointFX(@PC.apfx[0])[J + 1]);
                   Mid := TMetafileParser.Point((P1.X + P2.X) * 0.5, (P1.Y + P2.Y) * 0.5);
                   P2 := Mid;
                 end
                 else
-                  P2 := GlyphPoint(PC.apfx[J + 1]);
+                  P2 := GlyphPoint(PPointFX(@PC.apfx[0])[J + 1]);
                 Flat := TMetafileParser.QuadraticBezierToFlatPolyline(P0, P1, P2, AFlatness);
                 AppendPoints(Current, Flat, True);
               end;
@@ -5227,9 +5443,9 @@ var
               while K + 2 < PC.cpfx do
               begin
                 P0 := Current[High(Current)];
-                P1 := GlyphPoint(PC.apfx[K]);
-                P2 := GlyphPoint(PC.apfx[K + 1]);
-                P3 := GlyphPoint(PC.apfx[K + 2]);
+                P1 := GlyphPoint(PPointFX(@PC.apfx[0])[K]);
+                P2 := GlyphPoint(PPointFX(@PC.apfx[0])[K + 1]);
+                P3 := GlyphPoint(PPointFX(@PC.apfx[0])[K + 2]);
                 Flat := TMetafileParser.CubicBezierToFlatPolyline(P0, P1, P2, P3, AFlatness);
                 AppendPoints(Current, Flat, True);
                 Inc(K, 3);
@@ -5262,7 +5478,7 @@ begin
   Font := 0;
   OldFont := 0;
   try
-    OriginalHeight := Abs(ALogFont.lfHeight);
+    OriginalHeight := Abs(Double(ALogFont.lfHeight));
     if OriginalHeight = 0 then
       OriginalHeight := 12;
     ScaleX := OriginalHeight / TEXT_OUTLINE_EM_SIZE;
@@ -5287,7 +5503,10 @@ begin
       OutlineLogFont.lfHeight := TEXT_OUTLINE_EM_SIZE;
     if ALogFont.lfWidth <> 0 then
     begin
-      OutlineLogFont.lfWidth := Round(ALogFont.lfWidth * (TEXT_OUTLINE_EM_SIZE / OriginalHeight));
+      OutlineWidth := ALogFont.lfWidth * (TEXT_OUTLINE_EM_SIZE / OriginalHeight);
+      if (OutlineWidth < Low(Integer)) or (OutlineWidth > High(Integer)) then
+        raise EReadError.Create('EMF outline font width is out of range');
+      OutlineLogFont.lfWidth := Round(OutlineWidth);
       if OutlineLogFont.lfWidth = 0 then
       begin
         if ALogFont.lfWidth < 0 then
@@ -5336,6 +5555,8 @@ begin
       else
         BufSize := GetGlyphOutlineW(DC, Glyph, GGO_NATIVE or GGO_UNHINTED_LOCAL, {$IFDEF FPC}@GM{$ELSE}GM{$ENDIF}, 0, nil, {$IFDEF FPC}@Mat{$ELSE}Mat{$ENDIF});
 
+      if (BufSize <> GDI_ERROR) and (BufSize > 16 * 1024 * 1024) then
+        raise EReadError.Create('Native glyph outline size limit exceeded');
       if (BufSize > 0) and (BufSize <> GDI_ERROR) then
       begin
         GetMem(GlyphBuf, BufSize);

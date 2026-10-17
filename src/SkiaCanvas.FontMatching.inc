@@ -64,6 +64,8 @@ var
 begin
   FLock.Enter;
   try
+    if FCache.Count >= 512 then
+      FCache.Clear;
     Key := '$unicode-match:' + LowerCase(PreferredFamily) + '|' + LowerCase(Language) + '|' + Text;
     if FCache.TryGetValue(Key, Result) then
       Exit;
@@ -228,7 +230,7 @@ begin
           begin
             Stream.ReadBuffer(Offsets, 4);
             Offset := BE32(Offsets, 0);
-            if (Offset < 12 + Cardinal(Result) * 4) or (Int64(Offset) + 12 > Stream.Size) then
+            if (Int64(Offset) < 12 + Int64(Result) * 4) or (Int64(Offset) + 12 > Stream.Size) then
               raise ESkiaCanvasError.Create(SSkiaInvalidTtcFaceOffset);
             DirectoryPosition := Stream.Position;
             ValidateFace(Offset);

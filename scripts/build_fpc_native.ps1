@@ -27,6 +27,7 @@ if (!(Test-Path -LiteralPath $Compiler)) { throw "FPC compiler not found: $Compi
 $version = (& $Compiler -iV | Select-Object -Last 1).Trim()
 if ([version]$version -lt [version]'3.3.1') { throw "Native Skia requires FPC 3.3.1 or later; found $version at $Compiler" }
 if (!$StaticSkiaRoot -and !(Test-Path -LiteralPath $SkiaDll)) { throw "Matching Skia4Delphi 7.3 / m151 DLL not found: $SkiaDll" }
+if (!$StaticSkiaRoot) { $SkiaDll = (Resolve-Path -LiteralPath $SkiaDll).Path }
 $configuration = if ($StaticSkiaRoot) { "fpc-static-$Platform" } else { "fpc-native-$Platform" }
 $output = Join-Path $root "$Target\build\$configuration"
 New-Item -ItemType Directory -Force -Path $output | Out-Null
@@ -94,6 +95,11 @@ try {
             } else { & $exe }
             if ($LASTEXITCODE -ne 0) { throw "Execution failed: $program (exit $LASTEXITCODE)" }
         } finally { $env:PATH = $previousPath }
+        if ($Target -eq 'tests') {
+            $fuzzArgs=@{CompilerKind='FPC';Platform=$Platform;Compiler=$Compiler;Lazarus=$Lazarus;SkiaDll=$SkiaDll;OutputDirectory=(Join-Path $output 'fuzz')}
+            if($StaticSkiaRoot){$fuzzArgs.Static=$true;$fuzzArgs.StaticSkiaRoot=$StaticSkiaRoot}
+            & (Join-Path $PSScriptRoot 'run_emf_fuzz.ps1') @fuzzArgs
+        }
     }
 } finally { Pop-Location }
 

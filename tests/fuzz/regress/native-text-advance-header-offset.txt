@@ -1,0 +1,1 @@
+Damaged text advances must be rejected before native GDI text output, without allocating a multi-gigabyte temporary surface.

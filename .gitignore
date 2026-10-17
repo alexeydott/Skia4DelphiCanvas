@@ -90,3 +90,23 @@ __pycache__/
 *.rsj
 
 /runtime/dependency-sync.log
+
+# Additional compiler/linker products (including FPC and static builds)
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.dbg
+*.compiled
+
+# Standalone fuzz runs and legacy build directories
+/tests/fuzz/build/
+fuzz-output/
+fuzz-smoke-output/
+
+# Build/test logs; keep regression sidecars and input EMFs versioned
+*.log
+
+# demo/*.svg and demo/skia_demo.pdf are maintained README illustrations.
+# Keep them versioned; newly generated demo output belongs in /demo/build/.

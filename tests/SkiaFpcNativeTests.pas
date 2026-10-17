@@ -3,7 +3,7 @@ program SkiaFpcNativeTests;
 {$mode delphiunicode}{$codepage utf8}
 
 uses Interfaces, Classes, SysUtils, Windows, Types, Math, System.UITypes,
-  Vcl.Graphics, System.Skia, Vcl.Graphics.Skia, Vcl.GraphUtil.MetafileParser, SkiaPublicTypesTests;
+  Vcl.Graphics, System.Skia, Vcl.Graphics.Skia, Vcl.GraphUtil.MetafileParser, SkiaPublicTypesTests, EmfFuzzCore in 'fuzz\EmfFuzzCore.pas';
 var Passed,Failed:Integer;
 function RectF(L,T,R,B:Single):TRectF;
 begin Result.Left:=L;Result.Top:=T;Result.Right:=R;Result.Bottom:=B;end;
@@ -118,7 +118,33 @@ end;
 {$I SkiaThreadTests.inc}
 {$I SkiaMetafileTests.inc}
 {$I SkiaImageCodecTests.inc}
+{$I SkiaInputValidationTests.inc}
+{$I fuzz/SkiaEmfFuzzSmoke.inc}
 begin
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'fuzz' then
+    T_EmfFuzzSmoke
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review-emf' then
+    TestEmfPlayback
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review-compat' then
+  begin
+    T_BltNativeSources;
+    TestRops;
+    TestNativePathsAndState;
+    TestInputValidation;
+  end
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review' then
+  begin
+    TestReviewInputBounds;
+    TestReviewSetPixelBatch;
+    TestReviewOpaqueText;
+    TestReviewIsotropic;
+    TestCanvasApiGuards;
+    TestInputValidation;
+  end
+  else
   if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'textpath-affine' then
   begin
     Writeln('Test group: textpath-affine');
@@ -127,6 +153,8 @@ begin
   end
   else
   begin
+  T_EmfFuzzSmoke;
+  TestInputValidation;
   Writeln('Native Skia4Delphi ',TSkVersion.ToString);
   TestNativePngDecoding;
   Check(TestPublicGraphicsTypes,'public VCL/Skia aliases compile and render without extra graphics units');

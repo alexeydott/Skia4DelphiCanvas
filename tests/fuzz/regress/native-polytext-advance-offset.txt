@@ -1,0 +1,1 @@
+POLYTEXTOUT equivalent of native-text-advance-header-offset; validate every run before either probe/native replay or vector path capture.

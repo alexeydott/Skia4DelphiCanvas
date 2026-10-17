@@ -1,3 +1,132 @@
+{ GDI may enumerate millions of geometric dashes or construct enormous round
+  joins even when the destination clip is tiny. Bound device-space work before
+  either ordinary replay or the renderer's native path capture. Logical CAD
+  coordinates remain valid when their mapping reduces them to a modest size. }
+function MetafilePenObject(Handle: THandle; Size: Integer; Data: Pointer): Integer; stdcall; external 'gdi32.dll' name 'GetObjectW';
+function MetafileWindowExtent(DC: HDC; Extent: Pointer): BOOL; stdcall; external 'gdi32.dll' name 'GetWindowExtEx';
+function MetafileViewportExtent(DC: HDC; Extent: Pointer): BOOL; stdcall; external 'gdi32.dll' name 'GetViewportExtEx';
+function MetafileCurrentPoint(DC: HDC; Position: Pointer): BOOL; stdcall; external 'gdi32.dll' name 'GetCurrentPositionEx';
+
+procedure TMetafileRecordPlayer.ValidateWork(DC: HDC; RecordData: PEnhMetaRecord);
+const MaxDeviceSpan = 1048576.0; MaxDevicePenWidth = 65536.0;
+var
+  XF: TXForm;
+  WindowSize, ViewSize: TSize;
+  SX,SY,Scale,Width,LengthSum,DX,DY,SpanLimit: Double;
+  PenData: TBytes;
+  PenHandle: THandle;
+  Size,I,Count,Offset,Stride: Integer;
+  Previous,Next: TPoint;
+  Kind: Cardinal;
+  function IntAt(At:Integer):Integer;
+  begin Result:=PInteger(NativeUInt(RecordData)+NativeUInt(At))^;end;
+  procedure Segment(X,Y:Double);
+  begin
+    DX:=(X*XF.eM11+Y*XF.eM21)*SX;
+    DY:=(X*XF.eM12+Y*XF.eM22)*SY;
+    LengthSum:=LengthSum+Abs(DX)+Abs(DY);
+    if IsNan(LengthSum) or IsInfinite(LengthSum) or (LengthSum>SpanLimit) then
+      raise EReadError.Create('EMF native stroke work limit exceeded');
+  end;
+  procedure ValidateText(HeaderOffset,MinimumOffset:Integer);
+  var TextCount,TextOffset,TextStride:Cardinal;J,At:Integer;
+  begin
+    TextCount:=PCardinal(NativeUInt(RecordData)+NativeUInt(HeaderOffset+8))^;
+    TextOffset:=PCardinal(NativeUInt(RecordData)+NativeUInt(HeaderOffset+36))^;
+    if (TextOffset=0) or (TextCount=0) then Exit;
+    TextStride:=4;
+    if PCardinal(NativeUInt(RecordData)+NativeUInt(HeaderOffset+16))^ and ETO_PDY<>0 then TextStride:=8;
+    if (TextCount>65536) or (TextOffset<Cardinal(MinimumOffset)) or
+      (TextOffset and 3<>0) or (TextOffset>RecordData.nSize) or
+      (TextCount>(RecordData.nSize-TextOffset) div TextStride) then
+      raise EReadError.Create('Invalid EMF native text advances');
+    SpanLimit:=65536;
+    for J:=0 to Integer(TextCount)-1 do
+    begin
+      At:=Integer(TextOffset+Cardinal(J)*TextStride);
+      if TextStride=8 then Segment(IntAt(At),IntAt(At+4)) else Segment(IntAt(At),0);
+    end;
+  end;
+begin
+  if (DC=0) or (RecordData=nil) then Exit;
+  Kind:=RecordData.iType;
+  if not (Kind in [2..8,41..47,54..56,62..64,83,84,85..92,96,97]) then Exit;
+  FillChar(XF,SizeOf(XF),0);XF.eM11:=1;XF.eM22:=1;
+  GetWorldTransform(DC,XF);
+  SX:=1;SY:=1;
+  if MetafileWindowExtent(DC,@WindowSize) and MetafileViewportExtent(DC,@ViewSize) then
+  begin
+    if WindowSize.cx<>0 then SX:=ViewSize.cx/Double(WindowSize.cx);
+    if WindowSize.cy<>0 then SY:=ViewSize.cy/Double(WindowSize.cy);
+  end;
+  Scale:=Max(Abs(XF.eM11*SX)+Abs(XF.eM12*SY),Abs(XF.eM21*SX)+Abs(XF.eM22*SY));
+  SpanLimit:=MaxDeviceSpan;
+  if Kind in [83,84] then
+  begin
+    LengthSum:=0;
+    if RecordData.nSize>=76 then ValidateText(36,76);
+    Exit;
+  end;
+  if Kind in [96,97] then
+  begin
+    if RecordData.nSize<40 then Exit;
+    Count:=IntAt(36);
+    if (Count<0) or (Cardinal(Count)>(RecordData.nSize-40) div 40) or (Count>65536) then
+      raise EReadError.Create('Invalid EMF native text array');
+    LengthSum:=0;
+    for I:=0 to Count-1 do ValidateText(40+I*40,40+Count*40);
+    Exit;
+  end;
+  PenHandle:=GetCurrentObject(DC,OBJ_PEN);
+  Size:=MetafilePenObject(PenHandle,0,nil);
+  if (Size>=16) and (Size<=1024*1024) then
+  begin
+    SetLength(PenData,Size);
+    if MetafilePenObject(PenHandle,Size,@PenData[0])=Size then
+    begin
+      if PCardinal(@PenData[0])^ and $F=PS_NULL then Exit;
+      Width:=PCardinal(@PenData[4])^;
+      if Size=SizeOf(TLogPen) then Width:=Abs(Double(PInteger(@PenData[4])^));
+      if PCardinal(@PenData[0])^ and $F in [PS_DASH,PS_DOT,PS_DASHDOT,PS_DASHDOTDOT,PS_USERSTYLE,PS_ALTERNATE] then
+        SpanLimit:=Min(SpanLimit,8192*Max(1.0,Width*Scale));
+      if IsNan(Scale) or IsInfinite(Scale) or (Width*Scale>MaxDevicePenWidth) then
+        raise EReadError.Create('EMF native pen work limit exceeded');
+    end;
+  end;
+  LengthSum:=0;
+  if (Kind=54) and (RecordData.nSize>=16) then
+  begin
+    if MetafileCurrentPoint(DC,@Previous) then
+      Segment(Double(IntAt(8))-Previous.X,Double(IntAt(12))-Previous.Y);
+  end
+  else if (Kind in [42..47,55]) and (RecordData.nSize>=24) then
+  begin
+    Segment(2*(Double(IntAt(16))-IntAt(8)),0);
+    Segment(0,2*(Double(IntAt(20))-IntAt(12)));
+  end
+  else if (Kind in [2..6,56,85..89,92]) and (RecordData.nSize>=28) then
+  begin
+    Count:=IntAt(24);Offset:=28;Stride:=8;
+    if Kind>=85 then Stride:=4;
+    if (Count<0) or (Cardinal(Count)>(RecordData.nSize-28) div Cardinal(Stride)) then
+      raise EReadError.CreateFmt('Invalid EMF native point array: type %d count %d size %d',[Kind,Count,RecordData.nSize]);
+    if Count>1048576 then raise EReadError.Create('EMF native point work limit exceeded');
+    Previous:=Point(0,0);
+    if Kind in [5,6,56,88,89,92] then MetafileCurrentPoint(DC,@Previous);
+    for I:=0 to Count-1 do
+    begin
+      if Stride=8 then Next:=Point(IntAt(Offset),IntAt(Offset+4))
+      else begin
+        Next.X:=PSmallInt(NativeUInt(RecordData)+NativeUInt(Offset))^;
+        Next.Y:=PSmallInt(NativeUInt(RecordData)+NativeUInt(Offset+2))^;
+      end;
+      if (I>0) or (Kind in [5,6,56,88,89,92]) then
+        Segment(Double(Next.X)-Previous.X,Double(Next.Y)-Previous.Y);
+      Previous:=Next;Inc(Offset,Stride);
+    end;
+  end;
+end;
+
 { Compatibility replay for records whose content is representable but rejected by GDI. }
 function MetafileNativePlay(DC: HDC; Table, Rec: Pointer; Count: UINT): BOOL; stdcall; external 'gdi32.dll' name 'PlayEnhMetaFileRecord';
 function MetafileNativePath(DC: HDC; Points, Kinds: Pointer; Count: Integer): Integer; stdcall; external 'gdi32.dll' name 'GetPath';
@@ -59,6 +188,8 @@ begin
       Required := Stride * UInt64(Abs(Int64(Header.biHeight)));
       if Required > UInt64(Length(Bits)) then
         Exit;
+      if UInt64(Header.biWidth) * UInt64(Abs(Int64(Header.biHeight))) > 32 * 1024 * 1024 then
+        Exit;
       Height := Integer(Abs(Int64(Header.biHeight)));
       Valid := True;
       for Y := 0 to Height - 1 do
@@ -109,7 +240,7 @@ var
   end;
   function Extract(Offset, Size: Cardinal; out Data: TBytes): Boolean;
   begin
-    Result := (Offset <= RecordData.nSize) and (Size <= RecordData.nSize - Offset);
+    Result := (Size <= 128 * 1024 * 1024) and (Offset <= RecordData.nSize) and (Size <= RecordData.nSize - Offset);
     if Result then
     begin
       SetLength(Data, Size);
@@ -166,7 +297,7 @@ var
       (Abs(Int64(Decoded.biHeight)) <> Abs(Int64(DIB.biHeight))) then
       Exit;
     W := Decoded.biWidth;
-    if (W <= 0) or (UInt64(W) * UInt64(Abs(Int64(Decoded.biHeight))) * 4 > UInt64(Length(DecodedBits))) then
+    if (W <= 0) or (W > High(Integer) div 4) or (Abs(Int64(Decoded.biHeight)) > High(Integer)) or (UInt64(W) * UInt64(Abs(Int64(Decoded.biHeight))) * 4 > UInt64(Length(DecodedBits))) then
       Exit;
     H := Integer(Abs(Int64(Decoded.biHeight)));
     Stride := W * 4;
@@ -197,11 +328,13 @@ begin
     FError := ERROR_INVALID_PARAMETER;
     Exit;
   end;
-  if RecordData.nSize < MinimumMetafileRecordSize(RecordData.iType) then
+  if (RecordData.nSize > 128 * 1024 * 1024) or
+    (RecordData.nSize < MinimumMetafileRecordSize(RecordData.iType)) then
   begin
     FError := ERROR_INVALID_DATA;
     Exit;
   end;
+  ValidateWork(DC,RecordData);
   Kind := RecordData.iType;
   PathBefore := 0;
   Count := 0;
@@ -279,8 +412,11 @@ begin
     if (Table = nil) or (Objects <= 0) then
       Exit;
     Index := DWordAt(8);
-    if Index >= Cardinal(Objects) then
+    if (Table = nil) or (Index >= Cardinal(Objects)) then
       Exit;
+    Handles := Table;
+    if Handles[Index] <> 0 then
+      Exit; { Reject duplicate live handles instead of leaking the original object. }
     FillChar(Brush, SizeOf(Brush), 0);
     Brush.lbStyle := DWordAt(36);
     Brush.lbColor := DWordAt(40);
@@ -328,19 +464,21 @@ begin
           if Bitmap = 0 then
             Exit;
           Brush.lbStyle := BS_PATTERN;
-          Brush.lbHatch := NativeUInt(Bitmap);
+          Brush.lbHatch := {$IFDEF FPC}NativeUInt{$ELSE}NativeInt{$ENDIF}(Bitmap);
           Brush.lbColor := 0;
         end
         else
         begin
           { Packed DIB aliases share the same pixels; BS_DIBPATTERNPT is the
             supported pointer form expected by ExtCreatePen. }
+          if Length(Info) > High(Integer) - Length(Bits) then
+            Exit;
           SetLength(DecodedBits, Length(Info) + Length(Bits));
           Move(Info[0], DecodedBits[0], Length(Info));
           if Length(Bits) > 0 then
             Move(Bits[0], DecodedBits[Length(Info)], Length(Bits));
           Brush.lbStyle := BS_DIBPATTERNPT;
-          Brush.lbHatch := NativeUInt(Pointer(DecodedBits));
+          Brush.lbHatch := {$IFDEF FPC}NativeUInt{$ELSE}NativeInt{$ENDIF}(Pointer(DecodedBits));
           Brush.lbColor := Usage;
         end;
       end;

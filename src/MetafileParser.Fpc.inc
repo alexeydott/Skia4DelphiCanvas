@@ -144,3 +144,10 @@ type
   end;
   PEMGradientFill=^TEMGradientFill;
   PEMRExtCreateFontIndirect=Windows.PEMREXTCREATEFONTINDIRECTW;
+
+{$IF SizeOf(TTriVertex) <> 16}{$FATAL Invalid TRIVERTEX ABI}{$IFEND}
+{$IF SizeOf(TGradientRect) <> 8}{$FATAL Invalid GRADIENT_RECT ABI}{$IFEND}
+{$IF SizeOf(TGradientTriangle) <> 12}{$FATAL Invalid GRADIENT_TRIANGLE ABI}{$IFEND}
+{$IF SizeOf(Windows.EMRSTRETCHBLT) <> 108}{$FATAL Invalid EMRSTRETCHBLT ABI}{$IFEND}
+{$IF SizeOf(Windows.EMREXTTEXTOUTW) <> 76}{$FATAL Invalid EMREXTTEXTOUTW ABI}{$IFEND}
+{$IF SizeOf(TEMGradientFill) <> 52}{$FATAL Invalid EMRGRADIENTFILL ABI}{$IFEND}

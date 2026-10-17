@@ -1,0 +1,1 @@
+Invalid unsigned EMR_SETMAPMODE must be rejected explicitly, without a swallowed range-check exception.

@@ -31,4 +31,6 @@ if errorlevel 1 exit /b 1
 copy /y "..\runtime\%~1\sk4d.dll" "build\%~1\sk4d.dll" >nul
 if errorlevel 1 exit /b 1
 "build\%~1\SkiaCanvasTests.exe"
+if errorlevel 1 exit /b 1
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "..\scripts\run_emf_fuzz.ps1" -CompilerKind Delphi -Platform %~1 -CompilerRoot "%BDS%" -OutputDirectory "%CD%\build\%~1\fuzz"
 exit /b %errorlevel%

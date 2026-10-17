@@ -1,0 +1,1 @@
+High-bit COLORREF in BITBLT must preserve all 32 bits as TColor, without a range error under R+.

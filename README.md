@@ -1,8 +1,7 @@
 This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG.
 
 All repository-relative paths and commands below are relative to the project
-root, `D:\projects\externals\Skia4DelphiCanvas` on Windows or
-`/mnt/d/projects/externals/Skia4DelphiCanvas` in WSL. For another clone,
+root. For another clone,
 substitute its root directory. Native sources are in the [Skia submodule](skia);
 installed libraries and static linker inputs are in [runtime](runtime/README.md).
 
@@ -425,6 +424,176 @@ python scripts/verify_emf_images.py tests/build/fpc-native-win64/emf --log emf-t
 ```
 
 `--render` requires Windows WSL with Poppler (`pdftoppm`) and librsvg (`rsvg-convert`). The native test runners require Python with Pillow to generate complete independent GDI/Pillow references; set `SKIA_PYTHON` to select the interpreter. The image audit additionally requires pypdf. Every BMP is compared with the complete reference, verified against the original source hash. Recovered EMFs, patterned pens and Boolean raster fixtures require exact RGB equality. Vector pages use 8x8 block averages to accommodate different edge rasterizers. Every PDF/SVG is parsed and rendered; PDF geometry is also checked with a 144 dpi rendering reduced to the target size, while the original 72 dpi rendering is retained for inspection. Visible text fixtures must remain SVG contours without raster images or external-font text, and must contain no PDF image XObjects. Completely clipped text must preserve the empty reference output and needs no glyph path. Vector/image counts are saved in `image-comparison.json`. UTF-8 and BOM-marked UTF-16 native logs are accepted independently of the Windows code page. To run one fixture family, set `SKIA_EMF_FILTER` before starting a native test runner.
+
+## Input validation and resource limits
+
+Owned raster surfaces and internal BGRA buffers require positive dimensions and
+at most `High(Integer) div 4` pixels. Invalid dimensions and failed native surface
+allocation raise `ESkiaCanvasError`. Native blit coordinates are checked before
+mirroring or allocation. `Draw`, `BrushCopy` and bitmap blits preserve the source
+bitmap's format and pixels. Writable pixel locking is supported by bitmap canvases;
+a failed lock cannot subsequently write back an uninitialized buffer.
+
+Custom `Pen.DashPattern` values must have an even number of finite, nonnegative
+intervals and a positive total length; an empty array resets the pattern. Imported
+odd-length GDI dash lists are repeated to form an even list. `Pen.MiterLimit` must
+be finite and at least 1. Native brush imports preserve bitmap patterns or report
+an unsupported handle; edits to `Brush.Pattern` invalidate the cached paint.
+
+Font collection indexes must be nonnegative, and font streams must fit the managed
+byte-array length before reading. `GlyphCache.ShapeText` returns `False` with an
+empty glyph array for malformed UTF-16, including when fallback shaping is allowed.
+`RestoreState` retains its native checkpoint and restores wrapper resources if a
+resource observer raises, so the caller can retry after handling the exception.
+
+On Windows, `TMetafileParser.Limits` controls EMF ingestion:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `MaxRecordBytes` | 128 MiB | Maximum size of an individual record or copied record section. |
+| `MaxTotalBytes` | 512 MiB | Maximum source size and cumulative record bytes. |
+| `MaxTotalPoints` | 4,194,304 | Cumulative generated primitive points per load. |
+| `MaxArrayElements` | 1,048,576 | Maximum serialized array element count. |
+| `MaxTextChars` | 65,536 | Text units per record, including all POLYTEXTOUT runs. |
+| `MaxSaveDepth` | 1,024 | Maximum SaveDC nesting depth. |
+
+```pascal
+Limits := Parser.Limits;
+Limits.MaxTotalBytes := 64 * 1024 * 1024;
+Limits.MaxTextChars := 8192;
+Parser.Limits := Limits;
+if not Parser.LoadFromFile('drawing.emf') then
+  raise EReadError.Create(Parser.LastError);
+```
+
+File size is checked before native loading or handle copying, and text quotas are
+checked before native replay callbacks. Counters reset on each load. Invalid limit
+settings raise `EArgumentException`; parse and quota failures return `False` with
+`LastError`. Canvas metafile drawing uses the defaults. Native playback keeps an
+isolated metafile-handle copy; source limits are applied before making that copy.
+
+Additional work ceilings apply to generated point arrays (1,048,576 points), each
+flattened cubic segment (65,536 points), Boolean clipping (4,096 edges and 8,192
+subdivision levels), individual GDI glyph-outline buffers (16 MiB), and indexed
+palette recovery (32 million pixels). Native GDI replay also bounds device-space
+pen width (65,536), accumulated stroked span (1,048,576), geometric dash work
+(8,192 scaled pen widths), and explicit text advances (65,536). These checks run
+before native replay and path capture; large logical coordinates remain valid
+when their mapping reduces the device-space work. Invalid or unaligned text
+advance offsets are rejected before GDI can allocate a temporary text surface. Invalid region sizes, mesh indexes, raster
+sections and non-finite world transforms are checked before they are used.
+Invalid map modes and unrepresentable angle-arc endpoints are rejected explicitly.
+Text-outline normalization checks dimensions before narrowing them to LOGFONT
+fields; arc and ellipse geometry avoids signed integer overflow.
+
+Raster operations retain destination alpha for source-independent destination
+changes, such as focus inversion. PATCOPY/PATINVERT use pattern opacity; hatch
+holes remain zero RGB operands as in GDI. Source-dependent operations apply their
+RGB truth table using source coverage over the destination.
+
+Destination readback is restricted to conservative device bounds for rectangles,
+lines and rectangular transfers. Reusable device-sized scratch surfaces retain
+global shader sampling coordinates; they are cleared and read only within the
+operation's bounds and are released with the canvas. Unknown bounds retain the
+full-device fallback. Pixel reads fetch one pixel, bitmap pixel writes avoid a
+picture recorder, and clip queries use native raster clip bounds. EMF SETPIXELV
+reads a small device neighborhood; captured vector text without explicit ETO_CLIPPED
+coverage checks avoids destination readback. Text requiring the native coverage
+check and unsupported stroke widening retain their native fallback.
+
+`SKIA_TEST_GROUP=review` runs input-validation, state-failure, raster-transfer and
+EMF regressions; Linux runs their portable subset. `review-compat` additionally
+runs existing raster compatibility checks, and `review-emf` selects the Windows
+EMF suite. Leave `SKIA_TEST_GROUP` and `SKIA_EMF_FILTER` unset for the full suite.
+
+## Automatic EMF fuzz tests
+
+The Windows test scripts (`tests/run_tests.cmd`, `scripts/build_delphi_static.ps1`
+and `scripts/build_fpc_native.ps1 -Target tests`) automatically run a separately
+compiled fuzz harness for the selected Delphi/FPC, Win32/Win64, DLL/static build.
+Range and overflow checking remain enabled in the harness and parser units.
+
+Each build runs the complete 2,100-file generated corpus, all saved regressions,
+and 300 fixed-seed mutations plus an unmodified seed. The main Windows suite also
+runs the shared fuzz smoke include. Native GDI rejection and explicit parser
+validation errors are distinct from unexpected exceptions and timeouts.
+
+The supervisor uses a 2-second case watchdog and a 300-second process timeout.
+Failures stop the test script and preserve the current EMF, mutation metadata,
+stdout/stderr and a JSON report under `tests/build/<configuration>/fuzz`.
+Corpus generation uses a versioned cache protected against concurrent writers.
+Static harnesses are also checked for Skia DLL dependencies.
+
+For a longer rendered campaign across all eight Windows configurations:
+
+```powershell
+./scripts/run_emf_fuzz_matrix.ps1 -Iterations 10000 -OutputDirectory tests/build/long-fuzz
+```
+
+This runs each corpus and regression file with `--render`, then 10,000 random
+mutations plus the unmodified seed per build. The matrix logs every configuration
+and continues after a failed build, reporting overall failure at the end. It uses
+separate harness binaries, a 2-second case watchdog and a 1,800-second phase
+limit. `matrix.json`, per-phase reports and saved EMFs remain in the output
+folder. Reproduce from a saved EMF; GDI can vary seed padding between builds.
+
+See [fuzz test instructions](tests/fuzz/README.md) for standalone builds,
+reproductions, timeout overrides and longer campaigns.
+
+### Rendered fuzz results (2026-10-17)
+
+All eight Delphi 12/FPC 3.3.1 Win32/Win64 DLL/static builds passed **10,000
+mutations**, the 2,100-file corpus, all **15 regressions**, and an unmodified
+seed each: **96,928 case executions**, with zero unexpected errors, memory
+findings or timeouts. Inputs accepted by both parser modes also exercised Skia
+rendering and native GDI replay (**15,454 successful render/replay pairs**).
+The largest observed fuzz-process working-set/private-commit peak was **19.39 MiB**.
+All four FPC harnesses reported zero unfreed memory blocks; all four static
+harnesses passed the no-Skia-DLL dependency check.
+
+The campaign exposed high-bit raster background colors causing range errors,
+excessive geometric stroke/dash work, and corrupted text advances causing GDI
+temporary allocations up to approximately 1.6 GB. Fixes preserve COLORREF bits and reject
+excessive mapped work before native replay/path capture, including POLYTEXTOUT.
+Nine new saved EMFs extend the regression set from six to fifteen. Direct tests
+also cover valid downscaled, rotated, reflected and sheared coordinates/pens.
+`EmfFuzzCore.pas` and `EmfFuzz.dpr` compile without warnings in all eight builds;
+UTF-8 diagnostic names/paths were checked with Cyrillic under both compilers.
+
+## Validation
+
+The complete suite was run without `SKIA_TEST_GROUP` or `SKIA_EMF_FILTER` on
+2026-10-17. DLL and static are separate native builds:
+
+| Compiler | Platform | Linking | Passed per build | Failed |
+| --- | --- | --- | ---: | ---: |
+| Delphi 12 | Win32 | DLL / static | 40,313 | 0 |
+| Delphi 12 | Win64 | DLL / static | 40,313 | 0 |
+| FPC 3.3.1 | Win32 | DLL / static | 39,926 | 0 |
+| FPC 3.3.1 | Win64 | DLL / static | 39,926 | 0 |
+| FPC 3.3.1 | Linux x86-64, WSL/Xvfb | shared library | 34,202 | 0 |
+
+All nine builds passed **355,158 checks** in total. Delphi skipped no checks;
+FPC heap tracing reported zero unfreed blocks. The four Windows static executables
+have no Skia DLL import or embedded DLL loader name.
+
+Additional validation:
+
+- All eight fuzz builds enable range/overflow checking in the parser and harness
+  (`-$R+ -$Q+ -$C+` for Delphi; `-Cr -Co -gl -gh` for FPC). Fifteen saved EMFs
+  and the complete generated corpus passed in addition to the long campaigns.
+- All eight Windows builds: 664 text-bearing vector EMF fixtures at two sizes,
+  **10,624 PDF/SVG pairs**, with no SVG text nodes or raster images in these
+  text-only exports, including nested PDF Form XObjects.
+- All eight Windows builds: **11,632 PDF/SVG pairs** rendered
+  independently through WSL/Poppler/librsvg and compared with complete references;
+  zero export comparison failures.
+- Linux: **4,320 TextOnPath** and **450 font/pixmap** PDF/SVG pairs passed vector,
+  clipping and rendered-output checks. All 12 demo atlas pages and quickstart
+  agreed across raster, PDF and SVG.
+- Eight Python regressions check corpus framing/generation and invoked nested
+  PDF forms, repeated forms, unused resources, text detection and cyclic-form rejection. The demo API
+  catalog covers 10 classes, 132 member names and two color helpers.
 
 ## Multithreaded use
 

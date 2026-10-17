@@ -9,7 +9,7 @@ program SkiaCanvasTests;
 uses
   Classes, SysUtils, Types, Math,
   System.UITypes, System.Math.Vectors, Vcl.Imaging.pngimage,
-  Winapi.Windows, Vcl.Graphics, System.Skia, Vcl.Graphics.Skia, Vcl.GraphUtil.MetafileParser, SkiaPublicTypesTests;
+  Winapi.Windows, Vcl.Graphics, System.Skia, Vcl.Graphics.Skia, Vcl.GraphUtil.MetafileParser, SkiaPublicTypesTests, EmfFuzzCore in 'fuzz\EmfFuzzCore.pas';
 
 var
   GPassed, GFailed, GSkipped: Integer;
@@ -561,10 +561,10 @@ begin
       'Surrogate: ShapeText ok');
     Check(Length(Glyphs) = 3, 'Surrogate: пара = один глиф (A+emoji+B = 3)');
     WS := 'A' + WideChar($D83D) + 'B';
-    Check(C.GlyphCache.ShapeText(LF, Key, 2048, WS, Glyphs),
-      'Surrogate: lone ok');
+    Check(not C.GlyphCache.ShapeText(LF, Key, 2048, WS, Glyphs),
+      'Surrogate: lone surrogate rejected');
     
-    Check(Length(Glyphs) >= 2, 'Surrogate: surrounding letters preserved');
+    Check(Length(Glyphs) = 0, 'Surrogate: rejected text produces no partial glyphs');
     
   finally
     C.Free;
@@ -757,9 +757,44 @@ end;
 {$I SkiaThreadTests.inc}
 {$I SkiaMetafileTests.inc}
 {$I SkiaImageCodecTests.inc}
+{$I SkiaInputValidationTests.inc}
+{$I fuzz/SkiaEmfFuzzSmoke.inc}
 
 begin
   GPassed:=0; GFailed:=0; GSkipped:=0;
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'fuzz' then
+    T_EmfFuzzSmoke
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review-emf' then
+    TestEmfPlayback
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review-compat' then
+  begin
+    T_CompatPenModes;
+    T_CompatCopyRops;
+    T_CompatTransparencyAndMirroring;
+    T_CompatVectorRasterOps;
+    T_CompatClipStackAndFlood;
+    T_CompatSourceCoordinates;
+    T_CompatPrepaintedSurface;
+    T_CompatBrushKeyAndFrame;
+    T_CompatNonRectangularClip;
+    T_CompatPatternRopReference;
+    T_CompatInsideFrameClosedShapes;
+    T_BltNativeSources;
+    TestInputValidation;
+  end
+  else
+  if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'review' then
+  begin
+    TestReviewInputBounds;
+    TestReviewSetPixelBatch;
+    TestReviewOpaqueText;
+    TestReviewIsotropic;
+    TestCanvasApiGuards;
+    TestInputValidation;
+  end
+  else
   if SysUtils.GetEnvironmentVariable('SKIA_TEST_GROUP') = 'textpath-affine' then
   begin
     Writeln('Test group: textpath-affine');
@@ -768,6 +803,8 @@ begin
   end
   else
   begin
+  T_EmfFuzzSmoke;
+  TestInputValidation;
   WriteLn('=== SkiaCanvasTests ===');
   TestNativePngDecoding;
   

@@ -89,13 +89,37 @@ begin
     Check(not Canvas.GlyphCache.ShapeText(LF,Key,1000,WideChar($D800),Glyphs,True),
       'OpenType-only ShapeText rejects malformed UTF-16 without partial glyphs');
     Check((Length(Glyphs)=0) and not Canvas.GlyphCache.LastShapeUsedOpenType,'Failed shaping clears result and backend indicator');
+    Check(not Canvas.GlyphCache.ShapeText(LF,Key,1000,WideChar($D800),Glyphs),
+      'Review: default shaping also rejects malformed UTF-16 without fallback truncation');
   finally Canvas.Free;FontManager.Free;end;
   
 end;procedure TestCanvasApiGuards;
-var Canvas:TSkiaBitmapCanvas;Recorder:TSkiaMetafileCanvas;Picture:ISkPicture;Rejected:Boolean;
+var Canvas:TSkiaBitmapCanvas;Recorder:TSkiaMetafileCanvas;Picture:ISkPicture;Rejected:Boolean; Huge:TSkiaBitmapCanvas; LF:TLogFontW; NativeFont:TFont;
 begin
   Canvas:=TSkiaBitmapCanvas.Create(20,20);Recorder:=TSkiaMetafileCanvas.Create(20,20);
   try
+    Huge:=nil;Rejected:=False;
+    try Huge:=TSkiaBitmapCanvas.Create(High(Integer),2);except on E:ESkiaCanvasError do Rejected:=True;end;
+    Huge.Free;Check(Rejected,'Review: oversized raster is rejected before native allocation');
+    Rejected:=False;try Canvas.Pen.DashPattern:=TArray<Single>.Create(1);except on E:ESkiaCanvasError do Rejected:=True;end;
+    Check(Rejected,'Review: odd dash interval count rejected');
+    Rejected:=False;try Canvas.Pen.DashPattern:=TArray<Single>.Create(0,0);except on E:ESkiaCanvasError do Rejected:=True;end;
+    Check(Rejected,'Review: zero dash total rejected');
+    Rejected:=False;try Canvas.Pen.DashPattern:=TArray<Single>.Create(-1,2);except on E:ESkiaCanvasError do Rejected:=True;end;
+    Check(Rejected,'Review: negative dash interval rejected');
+    Canvas.Pen.DashPattern:=TArray<Single>.Create(0,2);
+    Check(Length(Canvas.Pen.DashPattern)=2,'Review: valid dash pattern with zero interval accepted');
+    Rejected:=False;try Canvas.Pen.MiterLimit:=0;except on E:ESkiaCanvasError do Rejected:=True;end;
+    Check(Rejected,'Review: miter limit below one rejected');
+    NativeFont:=TFont.Create;
+    try
+    FillChar(LF,SizeOf(LF),0);LF.lfPitchAndFamily:=FIXED_PITCH;
+    NativeFont.Handle:=CreateFontIndirectW(LF);Canvas.Font.Assign(NativeFont);Check(Canvas.Font.Pitch=fpFixed,'Review: LOGFONT fixed pitch maps to fpFixed');
+    LF.lfPitchAndFamily:=VARIABLE_PITCH;NativeFont.Handle:=CreateFontIndirectW(LF);Canvas.Font.Assign(NativeFont);
+    Check(Canvas.Font.Pitch=fpVariable,'Review: LOGFONT variable pitch maps to fpVariable');
+    LF.lfPitchAndFamily:=DEFAULT_PITCH;NativeFont.Handle:=CreateFontIndirectW(LF);Canvas.Font.Assign(NativeFont);
+    Check(Canvas.Font.Pitch=fpDefault,'Review: LOGFONT default pitch maps to fpDefault');
+    finally NativeFont.Free;end;
     Rejected:=False;try Canvas.Flush(nil);except on E:ESkiaCanvasError do Rejected:=True;end;
     Check(Rejected,'Flush nil target reports an argument error');
     Rejected:=False;try Recorder.Playback(TSkiaCanvas(nil));except on E:ESkiaCanvasError do Rejected:=True;end;
