@@ -1,12 +1,7 @@
-This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG.
-
-All repository-relative paths and commands below are relative to the project
-root. For another clone,
-substitute its root directory. Native sources are in the [Skia submodule](skia);
-installed libraries and static linker inputs are in [runtime](runtime/README.md).
+This repository contains a Skia-backed implementation of `Vcl.Graphics.TCustomCanvas` for Windows/Delphi and FPC on Windows or Linux. It provides VCL-style drawing, shaped text, raster surfaces that can be exported to PDF and SVG. `Skia4DelphiCanvas` allows you to replace the standard Canvas with a Skia canvas without making radical changes to your existing drawing code, while adding hardware acceleration, font anti-aliasing, and support for modern graphics features to your application.
 
 Native Windows builds support Delphi and FPC 3.3.1 or later. Both use the
-vendored Skia4Delphi 7.3.0 `System.Skia` bindings and a matching m151 `sk4d.dll`.
+vendored Skia4Delphi 7.3.0 `System.Skia` bindings and a matching m151 `sk4d.dll`. 
 
 ## Features
 
